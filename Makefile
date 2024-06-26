@@ -19,4 +19,4 @@ run/api:
 ## db/psql: connect to the database using psql
 .PHONY: db/psql
 db/psql:
-	psql ${database_url}	
+	psql ${DATABASE_URL}	

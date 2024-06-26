@@ -21,6 +21,8 @@ pub enum Error {
     },
     #[error("an error occurred with the database")]
     Sqlx(#[from] sqlx::Error),
+    #[error("an internal server error occurred")]
+    Anyhow(#[from] anyhow::Error),
 }
 
 impl Error {
@@ -46,7 +48,7 @@ impl Error {
             Self::Forbidden => StatusCode::FORBIDDEN,
             Self::NotFound => StatusCode::NOT_FOUND,
             Self::UnprocessableEntity { .. } => StatusCode::UNPROCESSABLE_ENTITY,
-            Self::Sqlx(_) => StatusCode::INTERNAL_SERVER_ERROR,
+            Self::Sqlx(_) | Self::Anyhow(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }
 }
@@ -75,6 +77,11 @@ impl IntoResponse for Error {
                 // TODO: we probably want to use `tracing` instead
                 // so that this gets linked to the HTTP request by `TraceLayer`.
                 log::error!("SQLx error: {:?}", e);
+            }
+            Self::Anyhow(ref e) => {
+                // TODO: we probably want to use `tracing` instead
+                // so that this gets linked to the HTTP request by `TraceLayer`.
+                log::error!("Generic error: {:?}", e);
             }
 
             // Other errors get mapped normally.

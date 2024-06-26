@@ -20,5 +20,10 @@ async fn main() -> anyhow::Result<()> {
         .await
         .context("could not connect to database_url")?;
 
+    sqlx::migrate!()
+        .run(&db)
+        .await
+        .context("could not run migrations")?;
+
     api::serve(config, db).await
 }

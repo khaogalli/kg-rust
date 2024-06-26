@@ -15,7 +15,9 @@ use tower_http::{
 
 use crate::config::Config;
 
+mod auth;
 mod error;
+mod users;
 
 pub use error::{Error, ResultExt};
 
@@ -46,6 +48,7 @@ pub async fn serve(config: Config, db: PgPool) -> anyhow::Result<()> {
 
 fn routes(app_context: AppContext) -> Router {
     Router::new()
+        .merge(users::router())
         .layer((
             SetSensitiveHeadersLayer::new([AUTHORIZATION]),
             CompressionLayer::new(),
