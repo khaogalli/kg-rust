@@ -1,0 +1,28 @@
+[package]
+name = "kg-rust"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = "1"
+axum = { version = "0.7", features = ["tower-log"] }
+clap = { version = "4.5.7", features = ["derive", "env"] }
+dotenv = "0.15.0"
+env_logger = "0.11.3"
+log = "0.4.21"
+serde = { version = "1", features = ["derive"] }
+sqlx = { version = "0.7", features = [
+    "runtime-tokio-native-tls",
+    "postgres",
+    "uuid",
+    "time",
+] }
+thiserror = "1"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal"] }
+tower-http = { version = "0.5.2", features = [
+    "catch-panic",
+    "compression-full",
+    "sensitive-headers",
+    "timeout",
+    "trace",
+] }
