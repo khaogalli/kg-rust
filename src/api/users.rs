@@ -13,7 +13,7 @@ pub(crate) fn router() -> Router<AppContext> {
     Router::new()
         .route("/api/users", post(create_user))
         .route("/api/users/login", post(login_user))
-        .route("/api/users", get(get_current_user))
+        .route("/api/users", get(get_current_user).patch(update_user))
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -29,8 +29,10 @@ struct NewUser {
 
 #[derive(serde::Serialize, serde::Deserialize)]
 struct User {
+    id: uuid::Uuid,
     token: String,
     username: String,
+    is_restaurant: bool,
 }
 
 async fn create_user(
@@ -51,8 +53,10 @@ async fn create_user(
 
     Ok(Json(UserBody {
         user: User {
+            id: user_id,
             token: AuthUser { user_id }.to_jwt(&ctx),
             username: req.user.username,
+            is_restaurant: false,
         },
     }))
 }
@@ -69,7 +73,7 @@ async fn login_user(
 ) -> Result<Json<UserBody<User>>> {
     let user = sqlx::query!(
         r#"
-            select user_id, username, password_hash 
+            select user_id, username, password_hash, is_restaurant 
             from "user" where username = $1
         "#,
         req.user.username,
@@ -82,11 +86,13 @@ async fn login_user(
 
     Ok(Json(UserBody {
         user: User {
+            id: user.user_id,
             token: AuthUser {
                 user_id: user.user_id,
             }
             .to_jwt(&ctx),
             username: user.username,
+            is_restaurant: user.is_restaurant,
         },
     }))
 }
@@ -96,7 +102,7 @@ async fn get_current_user(
     ctx: State<AppContext>,
 ) -> Result<Json<UserBody<User>>> {
     let user = sqlx::query!(
-        r#"select username from "user" where user_id = $1"#,
+        r#"select username, is_restaurant from "user" where user_id = $1"#,
         auth_user.user_id
     )
     .fetch_one(&ctx.db)
@@ -104,8 +110,81 @@ async fn get_current_user(
 
     Ok(Json(UserBody {
         user: User {
+            id: auth_user.user_id,
             token: auth_user.to_jwt(&ctx),
             username: user.username,
+            is_restaurant: user.is_restaurant,
+        },
+    }))
+}
+
+#[derive(serde::Deserialize)]
+struct UpdateUser {
+    username: Option<String>,
+    update_pass: Option<UpdatePass>,
+}
+
+#[derive(serde::Deserialize)]
+struct UpdatePass {
+    old_password: String,
+    new_password: String,
+}
+
+async fn update_user(
+    auth_user: AuthUser,
+    ctx: State<AppContext>,
+    Json(req): Json<UserBody<UpdateUser>>,
+) -> Result<Json<UserBody<User>>> {
+    let mut tx = ctx.db.begin().await?;
+
+    let user = sqlx::query!(
+        r#"select username, password_hash, is_restaurant from "user" where user_id = $1"#,
+        auth_user.user_id
+    )
+    .fetch_one(&mut *tx)
+    .await?;
+
+    if let Some(update_pass) = req.user.update_pass {
+        verify_password(update_pass.old_password, user.password_hash)
+            .await
+            .map_err(|e| match e {
+                Error::Unauthorized => {
+                    Error::unprocessable_entity([("old_password", "old password is incorrect")])
+                }
+                _ => e,
+            })?;
+        let new_hash = hash_password(update_pass.new_password).await?;
+
+        sqlx::query!(
+            r#"update "user" set password_hash = $1 where user_id = $2"#,
+            new_hash,
+            auth_user.user_id
+        )
+        .execute(&mut *tx)
+        .await?;
+    }
+
+    if let Some(ref username) = req.user.username {
+        sqlx::query!(
+            r#"update "user" set username = $1 where user_id = $2"#,
+            username,
+            auth_user.user_id
+        )
+        .execute(&mut *tx)
+        .await
+        .on_constraint("user_username_key", |_| {
+            Error::unprocessable_entity([("username", "username taken")])
+        })?;
+    }
+
+    tx.commit().await?;
+
+    Ok(Json(UserBody {
+        user: User {
+            id: auth_user.user_id,
+            token: auth_user.to_jwt(&ctx),
+            username: req.user.username.unwrap_or(user.username),
+            is_restaurant: user.is_restaurant,
         },
     }))
 }

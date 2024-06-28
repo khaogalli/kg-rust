@@ -17,6 +17,7 @@ use crate::config::Config;
 
 mod auth;
 mod error;
+mod restaurants;
 mod users;
 
 pub use error::{Error, ResultExt};
@@ -63,7 +64,7 @@ async fn shutdown_signal() {
     let ctrl_c = async {
         signal::ctrl_c()
             .await
-            .expect("failed to install Ctrl+C handler")
+            .expect("failed to install Ctrl+C handler");
     };
     #[cfg(unix)]
     let terminate = async {
