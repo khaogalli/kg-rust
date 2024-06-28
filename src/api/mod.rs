@@ -19,6 +19,7 @@ mod auth;
 mod error;
 mod restaurants;
 mod users;
+mod util;
 
 pub use error::{Error, ResultExt};
 
@@ -50,6 +51,7 @@ pub async fn serve(config: Config, db: PgPool) -> anyhow::Result<()> {
 fn routes(app_context: AppContext) -> Router {
     Router::new()
         .merge(users::router())
+        .merge(restaurants::router())
         .layer((
             SetSensitiveHeadersLayer::new([AUTHORIZATION]),
             CompressionLayer::new(),

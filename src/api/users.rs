@@ -1,11 +1,9 @@
-use anyhow::Context;
-use argon2::password_hash::SaltString;
-use argon2::{Argon2, PasswordHash};
 use axum::extract::State;
 use axum::routing::{get, post};
 use axum::{Json, Router};
 
 use crate::api::auth::AuthUser;
+use crate::api::util::{hash_password, verify_password};
 use crate::api::Result;
 use crate::api::{AppContext, Error, ResultExt};
 
@@ -32,7 +30,6 @@ struct User {
     id: uuid::Uuid,
     token: String,
     username: String,
-    is_restaurant: bool,
 }
 
 async fn create_user(
@@ -56,7 +53,6 @@ async fn create_user(
             id: user_id,
             token: AuthUser { user_id }.to_jwt(&ctx),
             username: req.user.username,
-            is_restaurant: false,
         },
     }))
 }
@@ -73,7 +69,7 @@ async fn login_user(
 ) -> Result<Json<UserBody<User>>> {
     let user = sqlx::query!(
         r#"
-            select user_id, username, password_hash, is_restaurant 
+            select user_id, username, password_hash
             from "user" where username = $1
         "#,
         req.user.username,
@@ -92,7 +88,6 @@ async fn login_user(
             }
             .to_jwt(&ctx),
             username: user.username,
-            is_restaurant: user.is_restaurant,
         },
     }))
 }
@@ -101,8 +96,8 @@ async fn get_current_user(
     auth_user: AuthUser,
     ctx: State<AppContext>,
 ) -> Result<Json<UserBody<User>>> {
-    let user = sqlx::query!(
-        r#"select username, is_restaurant from "user" where user_id = $1"#,
+    let user = sqlx::query_scalar!(
+        r#"select username from "user" where user_id = $1"#,
         auth_user.user_id
     )
     .fetch_one(&ctx.db)
@@ -112,8 +107,7 @@ async fn get_current_user(
         user: User {
             id: auth_user.user_id,
             token: auth_user.to_jwt(&ctx),
-            username: user.username,
-            is_restaurant: user.is_restaurant,
+            username: user,
         },
     }))
 }
@@ -138,7 +132,7 @@ async fn update_user(
     let mut tx = ctx.db.begin().await?;
 
     let user = sqlx::query!(
-        r#"select username, password_hash, is_restaurant from "user" where user_id = $1"#,
+        r#"select username, password_hash from "user" where user_id = $1"#,
         auth_user.user_id
     )
     .fetch_one(&mut *tx)
@@ -184,35 +178,6 @@ async fn update_user(
             id: auth_user.user_id,
             token: auth_user.to_jwt(&ctx),
             username: req.user.username.unwrap_or(user.username),
-            is_restaurant: user.is_restaurant,
         },
     }))
-}
-
-async fn hash_password(password: String) -> Result<String> {
-    tokio::task::spawn_blocking(move || -> Result<String> {
-        let salt = SaltString::generate(rand::thread_rng());
-        Ok(
-            PasswordHash::generate(Argon2::default(), password, salt.as_salt())
-                .map_err(|e| anyhow::anyhow!("failed to generate password hash: {}", e))?
-                .to_string(),
-        )
-    })
-    .await
-    .context("panic in generating password hash")?
-}
-
-async fn verify_password(password: String, password_hash: String) -> Result<()> {
-    tokio::task::spawn_blocking(move || -> Result<()> {
-        let hash = PasswordHash::new(&password_hash)
-            .map_err(|e| anyhow::anyhow!("invalid password hash: {}", e))?;
-
-        hash.verify_password(&[&Argon2::default()], password)
-            .map_err(|e| match e {
-                argon2::password_hash::Error::Password => Error::Unauthorized,
-                _ => anyhow::anyhow!("failed to verify password hash: {}", e).into(),
-            })
-    })
-    .await
-    .context("panic in verifying password hash")?
 }
