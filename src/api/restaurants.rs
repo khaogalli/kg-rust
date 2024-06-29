@@ -2,7 +2,7 @@ use crate::api::auth::{AuthRestaurant, AuthUser};
 use crate::api::util::{hash_password, verify_password};
 use crate::api::{Error, Result, ResultExt};
 use axum::extract::State;
-use axum::routing::{get, post};
+use axum::routing::{get, post, put};
 use axum::{Json, Router};
 
 use crate::api::AppContext;
@@ -15,6 +15,7 @@ pub(crate) fn router() -> Router<AppContext> {
             "/api/restaurants",
             get(get_current_restaurant).patch(update_restaurant),
         )
+        .route("/api/restaurants/menu", put(update_menu))
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -28,6 +29,19 @@ struct Restaurant {
     username: String,
     name: String,
     token: String,
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct Menu<T> {
+    menu: Vec<T>,
+}
+
+#[derive(serde::Serialize)]
+struct Item {
+    id: uuid::Uuid,
+    name: String,
+    description: String,
+    price: i32,
 }
 
 #[derive(serde::Serialize)]
@@ -189,4 +203,51 @@ async fn update_restaurant(
             name: req.restaurant.name.unwrap_or(restaurant.name),
         },
     }))
+}
+
+#[derive(serde::Deserialize)]
+struct NewItem {
+    name: String,
+    description: String,
+    price: i32,
+}
+
+async fn update_menu(
+    auth_restaurant: AuthRestaurant,
+    ctx: State<AppContext>,
+    Json(req): Json<Menu<NewItem>>,
+) -> Result<Json<Menu<Item>>> {
+    let mut tx = ctx.db.begin().await?;
+
+    sqlx::query!(
+        r#"delete from item where restaurant_id = $1"#,
+        auth_restaurant.restaurant_id
+    )
+    .execute(&mut *tx)
+    .await?;
+
+    let mut items = Vec::with_capacity(req.menu.len());
+
+    for item in req.menu {
+        let record = sqlx::query!(
+            r#"insert into item (restaurant_id, name, description, price) values ($1, $2, $3, $4) returning item_id"#,
+            auth_restaurant.restaurant_id,
+            item.name,
+            item.description,
+            item.price,
+        )
+        .fetch_one(&mut *tx)
+        .await?;
+
+        items.push(Item {
+            id: record.item_id,
+            name: item.name,
+            description: item.description,
+            price: item.price,
+        });
+    }
+
+    tx.commit().await?;
+
+    Ok(Json(Menu { menu: items }))
 }
