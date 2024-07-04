@@ -1,7 +1,7 @@
-use crate::api::auth::{AuthRestaurant, AuthUser};
+use crate::api::auth::{Auth, AuthRestaurant, AuthUser};
 use crate::api::util::{hash_password, verify_password};
 use crate::api::{Error, Result, ResultExt};
-use axum::extract::State;
+use axum::extract::{Path, State};
 use axum::routing::{get, post, put};
 use axum::{Json, Router};
 
@@ -16,6 +16,7 @@ pub(crate) fn router() -> Router<AppContext> {
             get(get_current_restaurant).patch(update_restaurant),
         )
         .route("/api/restaurants/menu", put(update_menu))
+        .route("/api/restaurants/menu/:restaurant_id", get(get_menu))
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -248,6 +249,18 @@ async fn update_menu(
     }
 
     tx.commit().await?;
+
+    Ok(Json(Menu { menu: items }))
+}
+
+async fn get_menu(_auth: Auth, Path(restaurant_id): Path<uuid::Uuid>) -> Result<Json<Menu<Item>>> {
+    let items = sqlx::query_as!(
+        Item,
+        r#"select item_id as "id!", name, description, price from item where restaurant_id = $1"#,
+        restaurant_id
+    )
+    .fetch_all(&ctx.db)
+    .await?;
 
     Ok(Json(Menu { menu: items }))
 }

@@ -17,6 +17,7 @@ use crate::config::Config;
 
 mod auth;
 mod error;
+mod orders;
 mod restaurants;
 mod users;
 mod util;
@@ -52,6 +53,7 @@ fn routes(app_context: AppContext) -> Router {
     Router::new()
         .merge(users::router())
         .merge(restaurants::router())
+        .merge(orders::router())
         .layer((
             SetSensitiveHeadersLayer::new([AUTHORIZATION]),
             CompressionLayer::new(),

@@ -265,3 +265,28 @@ where
         ))
     }
 }
+
+pub enum Auth {
+    User(AuthUser),
+    Restaurant(AuthRestaurant),
+}
+
+#[async_trait]
+impl<S> FromRequestParts<S> for Auth
+where
+    S: Send + Sync,
+    AppContext: FromRef<S>,
+{
+    type Rejection = Error;
+
+    async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
+        if let Ok(user) = AuthUser::from_request_parts(parts, state).await {
+            return Ok(Self::User(user));
+        }
+        if let Ok(restaurant) = AuthRestaurant::from_request_parts(parts, state).await {
+            return Ok(Self::Restaurant(restaurant));
+        }
+
+        Err(Error::Unauthorized)
+    }
+}
