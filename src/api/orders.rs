@@ -1,10 +1,10 @@
-use axum::extract::State;
+use axum::extract::{Path, State};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 
-use crate::api::auth::{Auth, AuthUser};
+use crate::api::auth::{Auth, AuthRestaurant, AuthUser};
+use crate::api::AppContext;
 use crate::api::Result;
-use crate::api::{AppContext, ResultExt};
 
 pub(crate) fn router() -> Router<AppContext> {
     Router::new()
@@ -121,24 +121,26 @@ async fn get_pending_orders_user(
     auth_user: AuthUser,
     ctx: State<AppContext>,
 ) -> Result<Vec<Order>> {
-    let orders = sqlx::query!(
+    let db_orders = sqlx::query!(
         r#"select order_id, restaurant_id, total from "order" where user_id = $1 and pending = true"#,
         auth_user.user_id
     )
     .fetch_all(&ctx.db)
     .await?;
 
-    let orders = orders
-        .into_iter()
-        .map(|order| Order {
+    let mut orders = Vec::with_capacity(db_orders.len());
+
+    for order in db_orders {
+        let items = get_items(order.order_id, &ctx).await?;
+        orders.push(Order {
             id: order.order_id,
             restaurant_id: order.restaurant_id,
             user_id: auth_user.user_id,
-            items: get_items(order.order_id, &ctx).await?,
+            items,
             total: order.total,
             pending: true,
-        })
-        .collect();
+        });
+    }
 
     Ok(orders)
 }
@@ -147,24 +149,26 @@ async fn get_pending_orders_restaurant(
     auth_restaurant: AuthRestaurant,
     ctx: State<AppContext>,
 ) -> Result<Vec<Order>> {
-    let orders = sqlx::query!(
+    let db_orders = sqlx::query!(
         r#"select order_id, user_id, total from "order" where restaurant_id = $1 and pending = true"#,
         auth_restaurant.restaurant_id
     )
     .fetch_all(&ctx.db)
     .await?;
 
-    let orders = orders
-        .into_iter()
-        .map(|order| Order {
+    let mut orders = Vec::with_capacity(db_orders.len());
+
+    for order in db_orders {
+        let items = get_items(order.order_id, &ctx).await?;
+        orders.push(Order {
             id: order.order_id,
             restaurant_id: auth_restaurant.restaurant_id,
             user_id: order.user_id,
-            items: get_items(order.order_id, &ctx).await?,
+            items,
             total: order.total,
             pending: true,
-        })
-        .collect();
+        });
+    }
 
     Ok(orders)
 }
@@ -227,25 +231,27 @@ async fn get_orders_user(
     days: i32,
     ctx: State<AppContext>,
 ) -> Result<Vec<Order>> {
-    let orders = sqlx::query!(
+    let db_orders = sqlx::query!(
         r#"select order_id, restaurant_id, total from "order" where user_id = $1 and pending = false and created_at > now() - interval '1 day' * $2"#,
         auth_user.user_id,
-        days
+        days as f64
     )
     .fetch_all(&ctx.db)
     .await?;
 
-    let orders = orders
-        .into_iter()
-        .map(|order| Order {
+    let mut orders = Vec::with_capacity(db_orders.len());
+
+    for order in db_orders {
+        let items = get_items(order.order_id, &ctx).await?;
+        orders.push(Order {
             id: order.order_id,
             restaurant_id: order.restaurant_id,
             user_id: auth_user.user_id,
-            items: get_items(order.order_id, &ctx).await?,
+            items,
             total: order.total,
             pending: false,
-        })
-        .collect();
+        });
+    }
 
     Ok(orders)
 }
@@ -255,25 +261,27 @@ async fn get_orders_restaurant(
     days: i32,
     ctx: State<AppContext>,
 ) -> Result<Vec<Order>> {
-    let orders = sqlx::query!(
+    let db_orders = sqlx::query!(
         r#"select order_id, user_id, total from "order" where restaurant_id = $1 and pending = false and created_at > now() - interval '1 day' * $2"#,
         auth_restaurant.restaurant_id,
-        days
+        days as f64
     )
     .fetch_all(&ctx.db)
     .await?;
 
-    let orders = orders
-        .into_iter()
-        .map(|order| Order {
+    let mut orders = Vec::with_capacity(db_orders.len());
+
+    for order in db_orders {
+        let items = get_items(order.order_id, &ctx).await?;
+        orders.push(Order {
             id: order.order_id,
             restaurant_id: auth_restaurant.restaurant_id,
             user_id: order.user_id,
-            items: get_items(order.order_id, &ctx).await?,
+            items,
             total: order.total,
             pending: false,
-        })
-        .collect();
+        });
+    }
 
     Ok(orders)
 }

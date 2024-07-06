@@ -37,7 +37,7 @@ struct Menu<T> {
     menu: Vec<T>,
 }
 
-#[derive(serde::Serialize)]
+#[derive(serde::Serialize, serde::Deserialize)]
 struct Item {
     id: uuid::Uuid,
     name: String,
@@ -253,7 +253,11 @@ async fn update_menu(
     Ok(Json(Menu { menu: items }))
 }
 
-async fn get_menu(_auth: Auth, Path(restaurant_id): Path<uuid::Uuid>) -> Result<Json<Menu<Item>>> {
+async fn get_menu(
+    _auth: Auth,
+    Path(restaurant_id): Path<uuid::Uuid>,
+    State(ctx): State<AppContext>,
+) -> Result<Json<Menu<Item>>> {
     let items = sqlx::query_as!(
         Item,
         r#"select item_id as "id!", name, description, price from item where restaurant_id = $1"#,

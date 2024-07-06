@@ -1,8 +1,8 @@
 create table "order" (
     order_id      uuid primary key                                default uuid_generate_v1mc(),
     restaurant_id uuid references restaurant (restaurant_id) on delete cascade not null,
-    user_id       uuid references "user" (user_id) on delete cascade,
-    total   int                                    not null,
+    user_id       uuid references "user" (user_id) on delete cascade not null,
+    total         int                                    not null,
     pending       bool                                   not null default true,
     created_at    timestamptz                            not null default now(),
     updated_at    timestamptz
