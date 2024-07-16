@@ -181,3 +181,12 @@ async fn update_user(
         },
     }))
 }
+
+pub(super) async fn get_username(user_id: uuid::Uuid, ctx: &State<AppContext>) -> Result<String> {
+    let username =
+        sqlx::query_scalar!(r#"select username from "user" where user_id = $1"#, user_id)
+            .fetch_one(&ctx.db)
+            .await?;
+
+    Ok(username)
+}

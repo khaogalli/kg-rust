@@ -268,3 +268,17 @@ async fn get_menu(
 
     Ok(Json(Menu { menu: items }))
 }
+
+pub(super) async fn get_restaurant_name(
+    restaurant_id: uuid::Uuid,
+    ctx: &State<AppContext>,
+) -> Result<String> {
+    let name = sqlx::query_scalar!(
+        r#"select name from "restaurant" where restaurant_id = $1"#,
+        restaurant_id
+    )
+    .fetch_one(&ctx.db)
+    .await?;
+
+    Ok(name)
+}

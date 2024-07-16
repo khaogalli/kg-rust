@@ -1,8 +1,11 @@
 use axum::extract::{Path, State};
 use axum::routing::{get, post};
 use axum::{Json, Router};
+use chrono::Local;
 
 use crate::api::auth::{Auth, AuthRestaurant, AuthUser};
+use crate::api::restaurants::get_restaurant_name;
+use crate::api::users::get_username;
 use crate::api::AppContext;
 use crate::api::Result;
 
@@ -23,10 +26,13 @@ struct OrderBody<T> {
 struct Order {
     id: uuid::Uuid,
     restaurant_id: uuid::Uuid,
+    restaurant_name: String,
     user_id: uuid::Uuid,
+    user_name: String,
     items: Vec<Item>,
     total: i32,
     pending: bool,
+    created_at: chrono::DateTime<Local>,
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -73,8 +79,8 @@ async fn make_order(
         });
     }
 
-    let order = sqlx::query_scalar!(
-        r#"insert into "order" (restaurant_id, user_id, total) values ($1, $2, $3) returning order_id"#,
+    let order = sqlx::query!(
+        r#"insert into "order" (restaurant_id, user_id, total) values ($1, $2, $3) returning order_id, created_at"#,
         req.order.restaurant_id,
         auth_user.user_id,
         total
@@ -83,7 +89,7 @@ async fn make_order(
     for item in &items {
         sqlx::query!(
             r#"insert into order_item (order_id, item_name, item_price, quantity) values ($1, $2, $3, $4)"#,
-            order,
+            order.order_id,
             item.name,
             item.price,
             item.quantity
@@ -96,12 +102,15 @@ async fn make_order(
 
     Ok(Json(OrderBody {
         order: Order {
-            id: order,
+            id: order.order_id,
             restaurant_id: req.order.restaurant_id,
+            restaurant_name: get_restaurant_name(req.order.restaurant_id, &ctx).await?,
             user_id: auth_user.user_id,
+            user_name: get_username(auth_user.user_id, &ctx).await?,
             items,
             total,
             pending: true,
+            created_at: order.created_at.with_timezone(&chrono::Local),
         },
     }))
 }
@@ -122,7 +131,7 @@ async fn get_pending_orders_user(
     ctx: State<AppContext>,
 ) -> Result<Vec<Order>> {
     let db_orders = sqlx::query!(
-        r#"select order_id, restaurant_id, total from "order" where user_id = $1 and pending = true"#,
+        r#"select order_id, restaurant_id, total, created_at from "order" where user_id = $1 and pending = true"#,
         auth_user.user_id
     )
     .fetch_all(&ctx.db)
@@ -135,10 +144,13 @@ async fn get_pending_orders_user(
         orders.push(Order {
             id: order.order_id,
             restaurant_id: order.restaurant_id,
+            restaurant_name: get_restaurant_name(order.restaurant_id, &ctx).await?,
             user_id: auth_user.user_id,
+            user_name: get_username(auth_user.user_id, &ctx).await?,
             items,
             total: order.total,
             pending: true,
+            created_at: order.created_at.with_timezone(&chrono::Local),
         });
     }
 
@@ -150,7 +162,7 @@ async fn get_pending_orders_restaurant(
     ctx: State<AppContext>,
 ) -> Result<Vec<Order>> {
     let db_orders = sqlx::query!(
-        r#"select order_id, user_id, total from "order" where restaurant_id = $1 and pending = true"#,
+        r#"select order_id, user_id, total, created_at from "order" where restaurant_id = $1 and pending = true"#,
         auth_restaurant.restaurant_id
     )
     .fetch_all(&ctx.db)
@@ -163,10 +175,13 @@ async fn get_pending_orders_restaurant(
         orders.push(Order {
             id: order.order_id,
             restaurant_id: auth_restaurant.restaurant_id,
+            restaurant_name: get_restaurant_name(auth_restaurant.restaurant_id, &ctx).await?,
             user_id: order.user_id,
+            user_name: get_username(order.user_id, &ctx).await?,
             items,
             total: order.total,
             pending: true,
+            created_at: order.created_at.with_timezone(&chrono::Local),
         });
     }
 
@@ -232,7 +247,7 @@ async fn get_orders_user(
     ctx: State<AppContext>,
 ) -> Result<Vec<Order>> {
     let db_orders = sqlx::query!(
-        r#"select order_id, restaurant_id, total from "order" where user_id = $1 and pending = false and created_at > now() - interval '1 day' * $2"#,
+        r#"select order_id, restaurant_id, total, pending, created_at from "order" where user_id = $1 and created_at > now() - interval '1 day' * $2"#,
         auth_user.user_id,
         days as f64
     )
@@ -246,10 +261,13 @@ async fn get_orders_user(
         orders.push(Order {
             id: order.order_id,
             restaurant_id: order.restaurant_id,
+            restaurant_name: get_restaurant_name(order.restaurant_id, &ctx).await?,
             user_id: auth_user.user_id,
+            user_name: get_username(auth_user.user_id, &ctx).await?,
             items,
             total: order.total,
-            pending: false,
+            pending: order.pending,
+            created_at: order.created_at.with_timezone(&chrono::Local),
         });
     }
 
@@ -262,7 +280,7 @@ async fn get_orders_restaurant(
     ctx: State<AppContext>,
 ) -> Result<Vec<Order>> {
     let db_orders = sqlx::query!(
-        r#"select order_id, user_id, total from "order" where restaurant_id = $1 and pending = false and created_at > now() - interval '1 day' * $2"#,
+        r#"select order_id, user_id, total, pending, created_at from "order" where restaurant_id = $1 and created_at > now() - interval '1 day' * $2"#,
         auth_restaurant.restaurant_id,
         days as f64
     )
@@ -276,10 +294,13 @@ async fn get_orders_restaurant(
         orders.push(Order {
             id: order.order_id,
             restaurant_id: auth_restaurant.restaurant_id,
+            restaurant_name: get_restaurant_name(auth_restaurant.restaurant_id, &ctx).await?,
             user_id: order.user_id,
+            user_name: get_username(order.user_id, &ctx).await?,
             items,
             total: order.total,
-            pending: false,
+            pending: order.pending,
+            created_at: order.created_at.with_timezone(&chrono::Local),
         });
     }
 

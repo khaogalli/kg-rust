@@ -8,6 +8,7 @@ anyhow = "1"
 argon2 = "0.5.3"
 async-trait = "0.1.80"
 axum = { version = "0.7", features = ["tower-log"] }
+chrono = { version = "0.4.38", features = ["serde"] }
 clap = { version = "4.5.7", features = ["derive", "env"] }
 dotenv = "0.15.0"
 env_logger = "0.11.3"
@@ -22,6 +23,7 @@ sqlx = { version = "0.7", features = [
     "postgres",
     "uuid",
     "time",
+    "chrono",
 ] }
 thiserror = "1"
 time = "0.3.36"
