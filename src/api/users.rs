@@ -1,6 +1,15 @@
-use axum::extract::State;
+use std::io::{BufWriter, Cursor};
+
+use anyhow::Context;
+use axum::extract::{Multipart, State};
 use axum::routing::{get, post};
 use axum::{Json, Router};
+use base64::decode;
+use image::load_from_memory;
+use serde::{Deserialize, Serialize};
+use tokio::fs::File;
+use tokio::io::AsyncWriteExt;
+use tower_http::services::ServeDir;
 
 use crate::api::auth::AuthUser;
 use crate::api::util::{hash_password, verify_password};
@@ -8,10 +17,14 @@ use crate::api::Result;
 use crate::api::{AppContext, Error, ResultExt};
 
 pub(crate) fn router() -> Router<AppContext> {
+    let serve_image_dir = ServeDir::new("images/users/");
+
     Router::new()
         .route("/api/users", post(create_user))
         .route("/api/users/login", post(login_user))
         .route("/api/users", get(get_current_user).patch(update_user))
+        .route("/api/users/upload_image", post(upload_image))
+        .nest_service("/api/users/image", serve_image_dir)
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -189,4 +202,40 @@ pub(super) async fn get_username(user_id: uuid::Uuid, ctx: &State<AppContext>) -
             .await?;
 
     Ok(username)
+}
+
+#[derive(Serialize, Deserialize)]
+struct ImageUpload {
+    image: String,
+}
+
+async fn upload_image(
+    auth_user: AuthUser,
+    ctx: State<AppContext>,
+    mut multipart: Multipart,
+) -> Result<()> {
+    let field = multipart
+        .next_field()
+        .await
+        .context("missing image field")?
+        .context("missing image field")?;
+
+    let data = field.bytes().await.context("failed to read image data")?;
+
+    let img = load_from_memory(&data).context("failed to load image")?;
+
+    let mut jpeg_data = Cursor::new(Vec::new());
+
+    img.write_to(&mut jpeg_data, image::ImageFormat::Jpeg)
+        .context("failed to encode image")?;
+
+    let output_path = format!("images/users/{}.jpg", auth_user.user_id);
+    let mut file = File::create(output_path)
+        .await
+        .context("failed to create image file")?;
+    file.write_all(&jpeg_data.into_inner())
+        .await
+        .context("failed to write image data")?;
+
+    Ok(())
 }

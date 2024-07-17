@@ -7,12 +7,14 @@ edition = "2021"
 anyhow = "1"
 argon2 = "0.5.3"
 async-trait = "0.1.80"
-axum = { version = "0.7", features = ["tower-log"] }
+axum = { version = "0.7", features = ["multipart", "tower-log"] }
+base64 = "0.22.1"
 chrono = { version = "0.4.38", features = ["serde"] }
 clap = { version = "4.5.7", features = ["derive", "env"] }
 dotenv = "0.15.0"
 env_logger = "0.11.3"
 hmac = "0.11.0"
+image = "0.25.1"
 jwt = "0.15.0"
 log = "0.4.21"
 rand = "0.8.5"
@@ -34,5 +36,8 @@ tower-http = { version = "0.5.2", features = [
     "sensitive-headers",
     "timeout",
     "trace",
+    "fs",
 ] }
+tracing = "0.1.40"
+tracing-subscriber = "0.3.18"
 uuid = { version = "1.9.1", features = ["serde"] }
