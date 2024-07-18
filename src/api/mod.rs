@@ -3,6 +3,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Context;
+use axum::extract::DefaultBodyLimit;
 use axum::http::header::AUTHORIZATION;
 use axum::Router;
 use sqlx::PgPool;
@@ -55,6 +56,7 @@ fn routes(app_context: AppContext) -> Router {
         .merge(restaurants::router())
         .merge(orders::router())
         .layer((
+            DefaultBodyLimit::disable(),
             SetSensitiveHeadersLayer::new([AUTHORIZATION]),
             CompressionLayer::new(),
             TraceLayer::new_for_http().on_failure(()),

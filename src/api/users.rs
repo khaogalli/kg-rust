@@ -1,14 +1,15 @@
-use std::io::{BufWriter, Cursor};
-
 use anyhow::Context;
-use axum::extract::{Multipart, State};
+use axum::extract::{Path, State};
+use axum::http::header::CONTENT_TYPE;
+use axum::http::StatusCode;
+use axum::response::{AppendHeaders, IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
-use base64::decode;
-use image::load_from_memory;
-use serde::{Deserialize, Serialize};
-use tokio::fs::File;
-use tokio::io::AsyncWriteExt;
+use base64::engine::{self, general_purpose, GeneralPurpose};
+use base64::prelude::BASE64_STANDARD;
+use base64::Engine;
+use serde::Deserialize;
+use sqlx::query;
 use tower_http::services::ServeDir;
 
 use crate::api::auth::AuthUser;
@@ -17,14 +18,12 @@ use crate::api::Result;
 use crate::api::{AppContext, Error, ResultExt};
 
 pub(crate) fn router() -> Router<AppContext> {
-    let serve_image_dir = ServeDir::new("images/users/");
-
     Router::new()
         .route("/api/users", post(create_user))
         .route("/api/users/login", post(login_user))
         .route("/api/users", get(get_current_user).patch(update_user))
         .route("/api/users/upload_image", post(upload_image))
-        .nest_service("/api/users/image", serve_image_dir)
+        .route("/api/users/image/:id", get(get_image))
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -204,38 +203,39 @@ pub(super) async fn get_username(user_id: uuid::Uuid, ctx: &State<AppContext>) -
     Ok(username)
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Deserialize)]
 struct ImageUpload {
     image: String,
 }
 
 async fn upload_image(
     auth_user: AuthUser,
-    ctx: State<AppContext>,
-    mut multipart: Multipart,
+    State(ctx): State<AppContext>,
+    Json(req): Json<ImageUpload>,
 ) -> Result<()> {
-    let field = multipart
-        .next_field()
-        .await
-        .context("missing image field")?
-        .context("missing image field")?;
+    let b64_data = req.image;
+    let data = BASE64_STANDARD
+        .decode(b64_data)
+        .context("failed to read image data")?;
 
-    let data = field.bytes().await.context("failed to read image data")?;
-
-    let img = load_from_memory(&data).context("failed to load image")?;
-
-    let mut jpeg_data = Cursor::new(Vec::new());
-
-    img.write_to(&mut jpeg_data, image::ImageFormat::Jpeg)
-        .context("failed to encode image")?;
-
-    let output_path = format!("images/users/{}.jpg", auth_user.user_id);
-    let mut file = File::create(output_path)
-        .await
-        .context("failed to create image file")?;
-    file.write_all(&jpeg_data.into_inner())
-        .await
-        .context("failed to write image data")?;
-
+    query!(
+        r#"update "user" set image = $1 where user_id = $2"#,
+        data,
+        auth_user.user_id
+    )
+    .execute(&ctx.db)
+    .await
+    .context("failed to upload image")?;
     Ok(())
+}
+
+async fn get_image(Path(id): Path<uuid::Uuid>, State(ctx): State<AppContext>) -> Result<Response> {
+    let res = query!(r#"select image from "user" where user_id = $1"#, id)
+        .fetch_one(&ctx.db)
+        .await?;
+
+    match res.image {
+        Some(image) => Ok((AppendHeaders([(CONTENT_TYPE, "image/jpeg")]), image).into_response()),
+        None => Ok(StatusCode::NOT_FOUND.into_response()),
+    }
 }

@@ -1,8 +1,17 @@
+use axum::http::header::CONTENT_TYPE;
+use axum::http::StatusCode;
+use axum::response::{AppendHeaders, IntoResponse, Response};
+use base64::prelude::BASE64_STANDARD;
+use base64::Engine;
+use serde::Deserialize;
+use sqlx::query;
+
 use crate::api::auth::{Auth, AuthRestaurant, AuthUser};
 use crate::api::util::{hash_password, verify_password};
 use crate::api::{Error, Result, ResultExt};
+use anyhow::Context;
 use axum::extract::{Path, State};
-use axum::routing::{get, post, put};
+use axum::routing::{delete, get, post, put};
 use axum::{Json, Router};
 
 use crate::api::AppContext;
@@ -17,6 +26,14 @@ pub(crate) fn router() -> Router<AppContext> {
         )
         .route("/api/restaurants/menu", put(update_menu))
         .route("/api/restaurants/menu/:restaurant_id", get(get_menu))
+        .route("/api/restaurants/upload_image", post(upload_image))
+        .route("/api/restaurants/image/:id", get(get_image))
+        .route(
+            "/api/restaurants/menu/item",
+            post(add_item).patch(update_item),
+        )
+        .route("/api/restaurants/menu/item/:id", delete(delete_item))
+        .route("/api/restaurants/menu/item/image/:id", get(get_item_image))
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -281,4 +298,188 @@ pub(super) async fn get_restaurant_name(
     .await?;
 
     Ok(name)
+}
+
+#[derive(Deserialize)]
+struct ImageUpload {
+    image: String,
+}
+
+async fn upload_image(
+    auth_restaurant: AuthRestaurant,
+    State(ctx): State<AppContext>,
+    Json(req): Json<ImageUpload>,
+) -> Result<()> {
+    let b64_data = req.image;
+    let data = BASE64_STANDARD
+        .decode(b64_data)
+        .context("failed to read image data")?;
+
+    query!(
+        "update restaurant set image = $1 where restaurant_id = $2",
+        data,
+        auth_restaurant.restaurant_id
+    )
+    .execute(&ctx.db)
+    .await
+    .context("failed to upload image")?;
+    Ok(())
+}
+
+async fn get_image(Path(id): Path<uuid::Uuid>, State(ctx): State<AppContext>) -> Result<Response> {
+    let res = query!("select image from restaurant where restaurant_id = $1", id)
+        .fetch_one(&ctx.db)
+        .await?;
+
+    match res.image {
+        Some(image) => Ok((AppendHeaders([(CONTENT_TYPE, "image/jpeg")]), image).into_response()),
+        None => Ok(StatusCode::NOT_FOUND.into_response()),
+    }
+}
+
+async fn get_item_image(
+    Path(id): Path<uuid::Uuid>,
+    State(ctx): State<AppContext>,
+) -> Result<Response> {
+    let res = query!("select image from item where item_id = $1", id)
+        .fetch_one(&ctx.db)
+        .await?;
+
+    match res.image {
+        Some(image) => Ok((AppendHeaders([(CONTENT_TYPE, "image/jpeg")]), image).into_response()),
+        None => Ok(StatusCode::NOT_FOUND.into_response()),
+    }
+}
+
+#[derive(Deserialize)]
+struct ItemBody<T> {
+    item: T,
+}
+
+#[derive(Deserialize)]
+
+struct UpdatedItem {
+    id: uuid::Uuid,
+    image: Option<String>,
+    name: Option<String>,
+    price: Option<i32>,
+    description: Option<String>,
+}
+
+async fn update_item(
+    auth_restaurant: AuthRestaurant,
+    State(ctx): State<AppContext>,
+    Json(req): Json<ItemBody<UpdatedItem>>,
+) -> Result<()> {
+    let mut tx = ctx.db.begin().await?;
+
+    if let Some(image) = req.item.image {
+        let b64_data = image;
+        let data = BASE64_STANDARD
+            .decode(b64_data)
+            .context("failed to read image data")?;
+        query!(
+            r#"update item set image = $1 where item_id = $2 AND restaurant_id = $3 "#,
+            data,
+            req.item.id,
+            auth_restaurant.restaurant_id
+        )
+        .execute(&mut *tx)
+        .await?;
+    };
+
+    if let Some(name) = req.item.name {
+        query!(
+            r#"update item set name = $1 where item_id = $2 AND restaurant_id = $3 "#,
+            name,
+            req.item.id,
+            auth_restaurant.restaurant_id
+        )
+        .execute(&mut *tx)
+        .await?;
+    }
+
+    if let Some(price) = req.item.price {
+        query!(
+            r#"update item set price = $1 where item_id = $2 AND restaurant_id = $3 "#,
+            price,
+            req.item.id,
+            auth_restaurant.restaurant_id
+        )
+        .execute(&mut *tx)
+        .await?;
+    }
+
+    if let Some(description) = req.item.description {
+        query!(
+            r#"update item set description = $1 where item_id = $2 AND restaurant_id = $3 "#,
+            description,
+            req.item.id,
+            auth_restaurant.restaurant_id
+        )
+        .execute(&mut *tx)
+        .await?;
+    }
+
+    tx.commit().await?;
+    Ok(())
+}
+
+async fn delete_item(
+    auth_restaurant: AuthRestaurant,
+    Path(id): Path<uuid::Uuid>,
+    State(ctx): State<AppContext>,
+) -> Result<()> {
+    query!(
+        r#"delete from item where item_id = $1 AND restaurant_id = $2"#,
+        id,
+        auth_restaurant.restaurant_id
+    )
+    .execute(&ctx.db)
+    .await?;
+    Ok(())
+}
+
+#[derive(Deserialize)]
+pub struct AddItem {
+    name: String,
+    description: String,
+    price: i32,
+    image: Option<String>,
+}
+
+async fn add_item(
+    auth_restaurant: AuthRestaurant,
+    State(ctx): State<AppContext>,
+    Json(req): Json<ItemBody<AddItem>>,
+) -> Result<()> {
+    let mut tx = ctx.db.begin().await?;
+
+    let record = query!(
+        r#"insert into item (restaurant_id, name, description, price) values ($1, $2, $3, $4) returning item_id"#,
+        auth_restaurant.restaurant_id,
+        req.item.name,
+        req.item.description,
+        req.item.price,
+    )
+    .fetch_one(&mut *tx)
+    .await?;
+
+    if let Some(image) = req.item.image {
+        let b64_data = image;
+        let data = BASE64_STANDARD
+            .decode(b64_data)
+            .context("failed to read image data")?;
+        query!(
+            r#"update item set image = $1 where item_id = $2 AND restaurant_id = $3 "#,
+            data,
+            record.item_id,
+            auth_restaurant.restaurant_id
+        )
+        .execute(&mut *tx)
+        .await?;
+    };
+
+    tx.commit().await?;
+    Ok(())
 }

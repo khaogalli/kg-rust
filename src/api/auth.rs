@@ -58,15 +58,8 @@ impl AuthUser {
 
         let token = &auth_header[SCHEME_PREFIX.len()..];
 
-        let jwt =
-            jwt::Token::<jwt::Header, AuthUserClaims, _>::parse_unverified(token).map_err(|e| {
-                log::debug!(
-                    "failed to parse Authorization header {:?}: {}",
-                    auth_header,
-                    e
-                );
-                Error::Unauthorized
-            })?;
+        let jwt = jwt::Token::<jwt::Header, AuthUserClaims, _>::parse_unverified(token)
+            .map_err(|e| Error::Unauthorized)?;
 
         let hmac = Hmac::<Sha384>::new_from_slice(ctx.config.hmac_key.as_bytes())
             .expect("HMAC-SHA-384 can accept any key length");
