@@ -2,3 +2,4 @@
 .env
 images/users/*
 images/restaurants/*
+.DS_STORE

@@ -24,7 +24,6 @@ pub(crate) fn router() -> Router<AppContext> {
             "/api/restaurants",
             get(get_current_restaurant).patch(update_restaurant),
         )
-        .route("/api/restaurants/menu", put(update_menu))
         .route("/api/restaurants/menu/:restaurant_id", get(get_menu))
         .route("/api/restaurants/upload_image", post(upload_image))
         .route("/api/restaurants/image/:id", get(get_image))
@@ -60,6 +59,7 @@ struct Item {
     name: String,
     description: String,
     price: i32,
+    available: bool,
 }
 
 #[derive(serde::Serialize)]
@@ -223,53 +223,6 @@ async fn update_restaurant(
     }))
 }
 
-#[derive(serde::Deserialize)]
-struct NewItem {
-    name: String,
-    description: String,
-    price: i32,
-}
-
-async fn update_menu(
-    auth_restaurant: AuthRestaurant,
-    ctx: State<AppContext>,
-    Json(req): Json<Menu<NewItem>>,
-) -> Result<Json<Menu<Item>>> {
-    let mut tx = ctx.db.begin().await?;
-
-    sqlx::query!(
-        r#"delete from item where restaurant_id = $1"#,
-        auth_restaurant.restaurant_id
-    )
-    .execute(&mut *tx)
-    .await?;
-
-    let mut items = Vec::with_capacity(req.menu.len());
-
-    for item in req.menu {
-        let record = sqlx::query!(
-            r#"insert into item (restaurant_id, name, description, price) values ($1, $2, $3, $4) returning item_id"#,
-            auth_restaurant.restaurant_id,
-            item.name,
-            item.description,
-            item.price,
-        )
-        .fetch_one(&mut *tx)
-        .await?;
-
-        items.push(Item {
-            id: record.item_id,
-            name: item.name,
-            description: item.description,
-            price: item.price,
-        });
-    }
-
-    tx.commit().await?;
-
-    Ok(Json(Menu { menu: items }))
-}
-
 async fn get_menu(
     _auth: Auth,
     Path(restaurant_id): Path<uuid::Uuid>,
@@ -277,7 +230,7 @@ async fn get_menu(
 ) -> Result<Json<Menu<Item>>> {
     let items = sqlx::query_as!(
         Item,
-        r#"select item_id as "id!", name, description, price from item where restaurant_id = $1"#,
+        r#"select item_id as "id!", name, description, price, available from item where restaurant_id = $1 ORDER BY created_at"#,
         restaurant_id
     )
     .fetch_all(&ctx.db)
@@ -364,6 +317,7 @@ struct UpdatedItem {
     name: Option<String>,
     price: Option<i32>,
     description: Option<String>,
+    available: Option<bool>,
 }
 
 async fn update_item(
@@ -414,6 +368,17 @@ async fn update_item(
         query!(
             r#"update item set description = $1 where item_id = $2 AND restaurant_id = $3 "#,
             description,
+            req.item.id,
+            auth_restaurant.restaurant_id
+        )
+        .execute(&mut *tx)
+        .await?;
+    }
+
+    if let Some(available) = req.item.available {
+        query!(
+            r#"update item set available = $1 where item_id = $2 AND restaurant_id = $3 "#,
+            available,
             req.item.id,
             auth_restaurant.restaurant_id
         )
