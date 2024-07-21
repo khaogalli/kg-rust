@@ -1,3 +1,5 @@
+use std::io::Cursor;
+
 use anyhow::Context;
 use axum::extract::{Path, State};
 use axum::http::header::CONTENT_TYPE;
@@ -5,15 +7,13 @@ use axum::http::StatusCode;
 use axum::response::{AppendHeaders, IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
-use base64::engine::{self, general_purpose, GeneralPurpose};
-use base64::prelude::BASE64_STANDARD;
-use base64::Engine;
+use image::imageops::FilterType::Nearest;
+use image::ImageFormat;
 use serde::Deserialize;
 use sqlx::query;
-use tower_http::services::ServeDir;
 
 use crate::api::auth::AuthUser;
-use crate::api::util::{hash_password, verify_password};
+use crate::api::util::{hash_password, image_from_base64, verify_password};
 use crate::api::Result;
 use crate::api::{AppContext, Error, ResultExt};
 
@@ -213,14 +213,15 @@ async fn upload_image(
     State(ctx): State<AppContext>,
     Json(req): Json<ImageUpload>,
 ) -> Result<()> {
-    let b64_data = req.image;
-    let data = BASE64_STANDARD
-        .decode(b64_data)
-        .context("failed to read image data")?;
-
+    let image = image_from_base64(&req.image)?;
+    let image = image.resize(160, 160, Nearest);
+    let mut cursor = Cursor::new(Vec::new());
+    image
+        .write_to(&mut cursor, ImageFormat::Jpeg)
+        .context("failed to encode image")?;
     query!(
         r#"update "user" set image = $1 where user_id = $2"#,
-        data,
+        cursor.into_inner(),
         auth_user.user_id
     )
     .execute(&ctx.db)

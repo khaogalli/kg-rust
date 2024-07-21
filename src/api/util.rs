@@ -1,6 +1,8 @@
 use anyhow::Context;
 use argon2::password_hash::SaltString;
 use argon2::{Argon2, PasswordHash};
+use base64::prelude::*;
+use image::DynamicImage;
 
 use crate::api::Error;
 use crate::api::Result;
@@ -31,4 +33,13 @@ pub(crate) async fn verify_password(password: String, password_hash: String) -> 
     })
     .await
     .context("panic in verifying password hash")?
+}
+
+pub(crate) fn image_from_base64(image: &str) -> Result<DynamicImage> {
+    let data = BASE64_STANDARD
+        .decode(image)
+        .context("failed to decude base64 image data")?;
+
+    let image = image::load_from_memory(&data).context("falied to decode image")?;
+    Ok(image)
 }

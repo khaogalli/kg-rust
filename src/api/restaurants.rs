@@ -1,17 +1,19 @@
+use std::io::Cursor;
+
 use axum::http::header::CONTENT_TYPE;
 use axum::http::StatusCode;
 use axum::response::{AppendHeaders, IntoResponse, Response};
-use base64::prelude::BASE64_STANDARD;
-use base64::Engine;
+use image::imageops::FilterType::Nearest;
+use image::ImageFormat;
 use serde::Deserialize;
 use sqlx::query;
 
 use crate::api::auth::{Auth, AuthRestaurant, AuthUser};
-use crate::api::util::{hash_password, verify_password};
+use crate::api::util::{hash_password, image_from_base64, verify_password};
 use crate::api::{Error, Result, ResultExt};
 use anyhow::Context;
 use axum::extract::{Path, State};
-use axum::routing::{delete, get, post, put};
+use axum::routing::{delete, get, post};
 use axum::{Json, Router};
 
 use crate::api::AppContext;
@@ -263,14 +265,16 @@ async fn upload_image(
     State(ctx): State<AppContext>,
     Json(req): Json<ImageUpload>,
 ) -> Result<()> {
-    let b64_data = req.image;
-    let data = BASE64_STANDARD
-        .decode(b64_data)
-        .context("failed to read image data")?;
+    let image = image_from_base64(&req.image)?;
+    let image = image.resize(160, 160, Nearest);
+    let mut cursor = Cursor::new(Vec::new());
+    image
+        .write_to(&mut cursor, ImageFormat::Jpeg)
+        .context("failed to encode image")?;
 
     query!(
         "update restaurant set image = $1 where restaurant_id = $2",
-        data,
+        cursor.into_inner(),
         auth_restaurant.restaurant_id
     )
     .execute(&ctx.db)
@@ -328,13 +332,15 @@ async fn update_item(
     let mut tx = ctx.db.begin().await?;
 
     if let Some(image) = req.item.image {
-        let b64_data = image;
-        let data = BASE64_STANDARD
-            .decode(b64_data)
-            .context("failed to read image data")?;
+        let image = image_from_base64(&image)?;
+        let image = image.resize(70, 70, Nearest);
+        let mut cursor = Cursor::new(Vec::new());
+        image
+            .write_to(&mut cursor, ImageFormat::Jpeg)
+            .context("failed to encode image")?;
         query!(
             r#"update item set image = $1 where item_id = $2 AND restaurant_id = $3 "#,
-            data,
+            cursor.into_inner(),
             req.item.id,
             auth_restaurant.restaurant_id
         )
@@ -431,13 +437,15 @@ async fn add_item(
     .await?;
 
     if let Some(image) = req.item.image {
-        let b64_data = image;
-        let data = BASE64_STANDARD
-            .decode(b64_data)
-            .context("failed to read image data")?;
+        let image = image_from_base64(&image)?;
+        let image = image.resize(70, 70, Nearest);
+        let mut cursor = Cursor::new(Vec::new());
+        image
+            .write_to(&mut cursor, ImageFormat::Jpeg)
+            .context("failed to encode image")?;
         query!(
             r#"update item set image = $1 where item_id = $2 AND restaurant_id = $3 "#,
-            data,
+            cursor.into_inner(),
             record.item_id,
             auth_restaurant.restaurant_id
         )
