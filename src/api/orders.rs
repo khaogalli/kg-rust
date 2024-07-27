@@ -3,7 +3,6 @@ use axum::extract::{Path, State};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use chrono::Local;
-use clap::error;
 use jwt::ToBase64;
 use log::info;
 use reqwest::Client;
@@ -12,20 +11,18 @@ use serde_json::json;
 use sha2::Digest;
 
 use crate::api::auth::{Auth, AuthRestaurant, AuthUser};
-use crate::api::restaurants::get_restaurant_name;
+use crate::api::restaurants::{
+    get_restaurant_name, get_restaurant_phonpe_details, PhonepeMerchant,
+};
 use crate::api::users::get_username;
 use crate::api::AppContext;
 use crate::api::Result;
 
-const KEY_INDEX: &str = "1";
-const KEY: &str = "96434309-7796-489d-8924-ab56988a6076";
 const HOST: &str = "https://api-preprod.phonepe.com/apis/pg-sandbox";
-const MID: &str = "PGTESTPAYUAT86";
 
 pub(crate) fn router() -> Router<AppContext> {
     Router::new()
         .route("/api/orders", post(make_order))
-        .route("/api/orders/pending", get(get_pending_orders))
         .route("/api/orders/complete/:order_id", post(complete_order))
         .route("/api/orders/:days", get(get_orders))
         .route("/api/orders/payment/:order_id", get(get_payment_session))
@@ -45,7 +42,7 @@ pub(super) struct Order {
     user_name: String,
     items: Vec<Item>,
     total: i32,
-    pending: bool,
+    status: String,
     created_at: chrono::DateTime<Local>,
 }
 
@@ -123,7 +120,7 @@ async fn make_order(
             user_name: get_username(auth_user.user_id, &ctx).await?,
             items,
             total,
-            pending: true,
+            status: "payment_pending".into(),
             created_at: order.created_at.with_timezone(&chrono::Local),
         },
     }))
@@ -160,7 +157,7 @@ async fn get_payment_session(
     ctx: State<AppContext>,
 ) -> Result<Json<Payment>> {
     let order = sqlx::query!(
-        r#"select total, status, payment_url from "order" where order_id = $1"#,
+        r#"select total, status, payment_url, restaurant_id from "order" where order_id = $1"#,
         order_id
     )
     .fetch_one(&ctx.db)
@@ -180,12 +177,14 @@ async fn get_payment_session(
         }));
     }
 
+    let merchant_info = get_restaurant_phonpe_details(order.restaurant_id, &ctx).await?;
+
     let oid = order_id.to_string().replace("-", "");
     let user_id = auth_user.user_id.to_string().replace("-", "");
 
     match order.payment_url {
         Some(url) => {
-            let status = verify_payment(oid).await?;
+            let status = verify_payment(oid, merchant_info).await?;
             match status {
                 PaymentStatus::Paid => {
                     sqlx::query!(
@@ -219,7 +218,7 @@ async fn get_payment_session(
         }
         None => {
             let data = json!({
-              "merchantId": MID,
+              "merchantId": merchant_info.id,
               "merchantTransactionId": oid,
               "merchantUserId": user_id,
               "amount": order.total.to_string()+"00",
@@ -241,7 +240,10 @@ async fn get_payment_session(
 
             let client = Client::new();
 
-            let xverify = calc_xverify(&[&request_data, "/pg/v1/pay", KEY], KEY_INDEX);
+            let xverify = calc_xverify(
+                &[&request_data, "/pg/v1/pay", &merchant_info.key],
+                &merchant_info.key_id,
+            );
 
             let response = client
                 .post(format!("{}/pg/v1/pay", HOST))
@@ -285,15 +287,21 @@ async fn get_payment_session(
     }
 }
 
-async fn verify_payment(oid: String) -> Result<PaymentStatus> {
+async fn verify_payment(oid: String, merchant_info: PhonepeMerchant) -> Result<PaymentStatus> {
     let client = Client::new();
-    let api_url = format!("{HOST}/pg/v1/status/{MID}/{oid}");
-    let xverify = calc_xverify(&[&format!("/pg/v1/status/{MID}/{oid}"), KEY], KEY_INDEX);
+    let api_url = format!("{}/pg/v1/status/{}/{}", HOST, merchant_info.id, oid);
+    let xverify = calc_xverify(
+        &[
+            &format!("/pg/v1/status/{}/{}", merchant_info.id, oid),
+            &merchant_info.key,
+        ],
+        &merchant_info.key_id,
+    );
     let response = client
         .get(api_url)
         .header("Content-Type", "application/json")
         .header("X-VERIFY", xverify)
-        .header("X-MERCHANT-ID", MID)
+        .header("X-MERCHANT-ID", merchant_info.id)
         .send()
         .await
         .context("failed to api request to phonepe")?;
@@ -326,79 +334,6 @@ async fn verify_payment(oid: String) -> Result<PaymentStatus> {
     }
 }
 
-async fn get_pending_orders(auth: Auth, ctx: State<AppContext>) -> Result<Json<Vec<Order>>> {
-    let order = match auth {
-        Auth::User(auth_user) => get_pending_orders_user(auth_user, ctx).await?,
-        Auth::Restaurant(auth_restaurant) => {
-            get_pending_orders_restaurant(auth_restaurant, ctx).await?
-        }
-    };
-
-    Ok(Json(order))
-}
-
-async fn get_pending_orders_user(
-    auth_user: AuthUser,
-    ctx: State<AppContext>,
-) -> Result<Vec<Order>> {
-    let db_orders = sqlx::query!(
-        r#"select order_id, restaurant_id, total, created_at from "order" where user_id = $1 and pending = true"#,
-        auth_user.user_id
-    )
-    .fetch_all(&ctx.db)
-    .await?;
-
-    let mut orders = Vec::with_capacity(db_orders.len());
-
-    for order in db_orders {
-        let items = get_items(order.order_id, &ctx).await?;
-        orders.push(Order {
-            id: order.order_id,
-            restaurant_id: order.restaurant_id,
-            restaurant_name: get_restaurant_name(order.restaurant_id, &ctx).await?,
-            user_id: auth_user.user_id,
-            user_name: get_username(auth_user.user_id, &ctx).await?,
-            items,
-            total: order.total,
-            pending: true,
-            created_at: order.created_at.with_timezone(&chrono::Local),
-        });
-    }
-
-    Ok(orders)
-}
-
-async fn get_pending_orders_restaurant(
-    auth_restaurant: AuthRestaurant,
-    ctx: State<AppContext>,
-) -> Result<Vec<Order>> {
-    let db_orders = sqlx::query!(
-        r#"select order_id, user_id, total, created_at from "order" where restaurant_id = $1 and pending = true"#,
-        auth_restaurant.restaurant_id
-    )
-    .fetch_all(&ctx.db)
-    .await?;
-
-    let mut orders = Vec::with_capacity(db_orders.len());
-
-    for order in db_orders {
-        let items = get_items(order.order_id, &ctx).await?;
-        orders.push(Order {
-            id: order.order_id,
-            restaurant_id: auth_restaurant.restaurant_id,
-            restaurant_name: get_restaurant_name(auth_restaurant.restaurant_id, &ctx).await?,
-            user_id: order.user_id,
-            user_name: get_username(order.user_id, &ctx).await?,
-            items,
-            total: order.total,
-            pending: true,
-            created_at: order.created_at.with_timezone(&chrono::Local),
-        });
-    }
-
-    Ok(orders)
-}
-
 async fn get_items(order_id: uuid::Uuid, ctx: &State<AppContext>) -> Result<Vec<Item>> {
     let items = sqlx::query!(
         r#"select item_name, item_price, quantity from order_item where order_id = $1"#,
@@ -425,7 +360,7 @@ async fn complete_order(
     let mut tx = ctx.db.begin().await?;
 
     sqlx::query!(
-        r#"update "order" set pending = false where order_id = $1 and restaurant_id = $2"#,
+        r#"update "order" set status = 'completed' where order_id = $1 and restaurant_id = $2 and status='paid'"#,
         order_id,
         auth_restaurant.restaurant_id
     )
@@ -457,7 +392,7 @@ async fn get_orders_user(
     ctx: State<AppContext>,
 ) -> Result<Vec<Order>> {
     let db_orders = sqlx::query!(
-        r#"select order_id, restaurant_id, total, pending, created_at from "order" where user_id = $1 and created_at > now() - interval '1 day' * $2"#,
+        r#"select order_id, restaurant_id, total, status, created_at from "order" where user_id = $1 and created_at > now() - interval '1 day' * $2 and status in ('completed','paid')"#,
         auth_user.user_id,
         days as f64
     )
@@ -476,7 +411,7 @@ async fn get_orders_user(
             user_name: get_username(auth_user.user_id, &ctx).await?,
             items,
             total: order.total,
-            pending: order.pending,
+            status: order.status,
             created_at: order.created_at.with_timezone(&chrono::Local),
         });
     }
@@ -490,7 +425,7 @@ async fn get_orders_restaurant(
     ctx: State<AppContext>,
 ) -> Result<Vec<Order>> {
     let db_orders = sqlx::query!(
-        r#"select order_id, user_id, total, pending, created_at from "order" where restaurant_id = $1 and created_at > now() - interval '1 day' * $2"#,
+        r#"select order_id, user_id, total, status, created_at from "order" where restaurant_id = $1 and created_at > now() - interval '1 day' * $2 and status in ('completed','paid')"#,
         auth_restaurant.restaurant_id,
         days as f64
     )
@@ -509,7 +444,7 @@ async fn get_orders_restaurant(
             user_name: get_username(order.user_id, &ctx).await?,
             items,
             total: order.total,
-            pending: order.pending,
+            status: order.status,
             created_at: order.created_at.with_timezone(&chrono::Local),
         });
     }

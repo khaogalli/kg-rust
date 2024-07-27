@@ -456,3 +456,27 @@ async fn add_item(
     tx.commit().await?;
     Ok(())
 }
+
+pub(crate) struct PhonepeMerchant {
+    pub id: String,
+    pub key: String,
+    pub key_id: String,
+}
+
+pub(crate) async fn get_restaurant_phonpe_details(
+    restaurant_id: uuid::Uuid,
+    ctx: &State<AppContext>,
+) -> Result<PhonepeMerchant> {
+    let merchant = sqlx::query!(
+        r#"select phonepe_id, phonepe_key, phonepe_key_id from "restaurant" where restaurant_id = $1"#,
+        restaurant_id
+    )
+    .fetch_one(&ctx.db)
+    .await?;
+
+    Ok(PhonepeMerchant {
+        id: merchant.phonepe_id,
+        key: merchant.phonepe_key,
+        key_id: merchant.phonepe_key_id,
+    })
+}

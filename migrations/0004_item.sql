@@ -5,7 +5,7 @@ create table item (
     description   text                                   not null,
     price         int                                    not null,
     image         bytea,
-    available     boolean                                not null default true
+    available     boolean                                not null default true,
     created_at    timestamptz                            not null default now(),
     updated_at    timestamptz
 );

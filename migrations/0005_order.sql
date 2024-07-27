@@ -3,7 +3,7 @@ create table "order" (
     restaurant_id uuid references restaurant (restaurant_id) on delete cascade not null,
     user_id       uuid references "user" (user_id) on delete cascade not null,
     total         int                                    not null,
-    pending       bool                                   not null default true,
+    status        text                                   not null default 'payment_pending',
     payment_url   text,
     created_at    timestamptz                            not null default now(),
     updated_at    timestamptz
