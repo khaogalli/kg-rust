@@ -222,7 +222,7 @@ async fn get_payment_session(
               "merchantTransactionId": oid,
               "merchantUserId": user_id,
               "amount": order.total.to_string()+"00",
-              "redirectUrl": "https://webhook.site/redirect-url",
+              "redirectUrl": "https://khaogalli.me/static/payments.html",
               "redirectMode": "REDIRECT",
               "callbackUrl": "https://webhook.site/callback-url",
               "paymentInstrument": {
