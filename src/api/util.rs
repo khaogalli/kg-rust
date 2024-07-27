@@ -38,7 +38,7 @@ pub(crate) async fn verify_password(password: String, password_hash: String) -> 
 pub(crate) fn image_from_base64(image: &str) -> Result<DynamicImage> {
     let data = BASE64_STANDARD
         .decode(image)
-        .context("failed to decude base64 image data")?;
+        .context("failed to decode base64 image data")?;
 
     let image = image::load_from_memory(&data).context("falied to decode image")?;
     Ok(image)
