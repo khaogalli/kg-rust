@@ -188,7 +188,7 @@ async fn get_payment_session(
             match status {
                 PaymentStatus::Paid => {
                     sqlx::query!(
-                        r#"update "order" set status = 'payment_paid' where order_id = $1"#,
+                        r#"update "order" set status = 'paid' where order_id = $1"#,
                         order_id
                     )
                     .execute(&ctx.db)
