@@ -91,7 +91,7 @@ async fn make_order(
     }
 
     let order = sqlx::query!(
-        r#"insert into "order" (restaurant_id, user_id, total) values ($1, $2, $3) returning order_id, created_at"#,
+        r#"insert into "order" (restaurant_id, user_id, total) values ($1, $2, $3) returning order_id, created_at as "created_at!: chrono::DateTime<Local>""#,
         req.order.restaurant_id,
         auth_user.user_id,
         total
@@ -121,7 +121,7 @@ async fn make_order(
             items,
             total,
             status: "payment_pending".into(),
-            created_at: order.created_at.with_timezone(&chrono::Local),
+            created_at: order.created_at,
         },
     }))
 }
@@ -392,7 +392,7 @@ async fn get_orders_user(
     ctx: State<AppContext>,
 ) -> Result<Vec<Order>> {
     let db_orders = sqlx::query!(
-        r#"select order_id, restaurant_id, total, status, created_at from "order" where user_id = $1 and created_at > now() - interval '1 day' * $2 and status in ('completed','paid')"#,
+        r#"select order_id, restaurant_id, total, status, created_at as "created_at!: chrono::DateTime<Local>" from "order" where user_id = $1 and created_at > now() - interval '1 day' * $2 and status in ('completed','paid')"#,
         auth_user.user_id,
         days as f64
     )
@@ -412,7 +412,7 @@ async fn get_orders_user(
             items,
             total: order.total,
             status: order.status,
-            created_at: order.created_at.with_timezone(&chrono::Local),
+            created_at: order.created_at,
         });
     }
 
@@ -425,7 +425,7 @@ async fn get_orders_restaurant(
     ctx: State<AppContext>,
 ) -> Result<Vec<Order>> {
     let db_orders = sqlx::query!(
-        r#"select order_id, user_id, total, status, created_at from "order" where restaurant_id = $1 and created_at > now() - interval '1 day' * $2 and status in ('completed','paid')"#,
+        r#"select order_id, user_id, total, status, created_at as "created_at!: chrono::DateTime<Local>" from "order" where restaurant_id = $1 and created_at > now() - interval '1 day' * $2 and status in ('completed','paid')"#,
         auth_restaurant.restaurant_id,
         days as f64
     )
@@ -445,7 +445,7 @@ async fn get_orders_restaurant(
             items,
             total: order.total,
             status: order.status,
-            created_at: order.created_at.with_timezone(&chrono::Local),
+            created_at: order.created_at,
         });
     }
 

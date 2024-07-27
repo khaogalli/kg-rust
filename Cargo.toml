@@ -23,13 +23,7 @@ reqwest = { version = "0.12.5", features = ["json"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1.0.120"
 sha2 = "0.9"
-sqlx = { version = "0.7", features = [
-    "runtime-tokio-native-tls",
-    "postgres",
-    "uuid",
-    "time",
-    "chrono",
-] }
+sqlx = { version = "0.8", features = ["runtime-tokio-native-tls", "postgres", "uuid", "time", "chrono"] }
 thiserror = "1"
 time = "0.3.36"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal"] }
