@@ -8,7 +8,7 @@ use sqlx::postgres::PgPool;
 async fn main() -> anyhow::Result<()> {
     // dotenv returns an error if the .env file is not found
     // but the dotenv file is optional, so we ignore the error
-    dotenv::dotenv().ok();
+    dotenvy::dotenv().ok();
 
     // Initialize the logger
     env_logger::init();
