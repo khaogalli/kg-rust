@@ -9,6 +9,7 @@ use axum::Router;
 use sqlx::PgPool;
 use tokio::net::TcpListener;
 use tokio::signal;
+use tower_http::services::ServeDir;
 use tower_http::{
     catch_panic::CatchPanicLayer, compression::CompressionLayer,
     sensitive_headers::SetSensitiveHeadersLayer, timeout::TimeoutLayer, trace::TraceLayer,
@@ -55,6 +56,7 @@ fn routes(app_context: AppContext) -> Router {
         .merge(users::router())
         .merge(restaurants::router())
         .merge(orders::router())
+        .nest_service("/static", ServeDir::new("static"))
         .layer((
             DefaultBodyLimit::disable(),
             SetSensitiveHeadersLayer::new([AUTHORIZATION]),
