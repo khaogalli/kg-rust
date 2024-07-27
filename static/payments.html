@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="refresh" url="khaogalli://"/>
+    <title>Payment Successful</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: #f74449;
+            /* Keeping the background color as is */
+            font-family: Arial, sans-serif;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            text-align: center;
+            color: white;
+        }
+
+        .container {
+            background-color: #aa2e32;
+            border-radius: 20px;
+            padding: 20px;
+            width: 80%;
+            /* Adjusted for mobile view */
+            max-width: 350px;
+            border: 2px solid white;
+            position: relative;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            box-shadow: 0 0 10px rgba(0, 0, 0, 0.2);
+            /* Added shadow for better visibility */
+        }
+
+        .logo {
+            width: 100px;
+            /* Slightly smaller logo for mobile view */
+            height: 100px;
+            border-radius: 50px;
+            border: 2px solid black;
+            margin-bottom: 20px;
+        }
+
+        .message {
+            font-size: 18px;
+            /* Increased font size for better readability on mobile */
+            font-weight: bold;
+            color: #4CAF50;
+            /* Success shade of green */
+            margin-bottom: 20px;
+            animation: slideIn 1.5s ease-out;
+        }
+
+        @keyframes slideIn {
+            from {
+                transform: translateY(-20px);
+                opacity: 0;
+            }
+
+            to {
+                transform: translateY(0);
+                opacity: 1;
+            }
+        }
+
+        .loader {
+            border: 6px solid #f3f3f3;
+            border-top: 6px solid #4CAF50;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            0% {
+                transform: rotate(0deg);
+            }
+
+            100% {
+                transform: rotate(360deg);
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <img src="download.png" alt="Logo" class="logo">
+        <div class="message">Payment successful! Redirecting...</div>
+        <div class="loader"></div>
+    </div>
+</body>
+
+</html>
