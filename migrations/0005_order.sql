@@ -4,6 +4,7 @@ create table "order" (
     user_id       uuid references "user" (user_id) on delete cascade not null,
     total         int                                    not null,
     pending       bool                                   not null default true,
+    payment_url   text,
     created_at    timestamptz                            not null default now(),
     updated_at    timestamptz
 );

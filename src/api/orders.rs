@@ -1,18 +1,26 @@
 use anyhow::Context;
 use axum::extract::{Path, State};
-use axum::response::IntoResponse;
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use chrono::Local;
+use clap::error;
+use jwt::ToBase64;
+use log::info;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use sha2::Digest;
 
 use crate::api::auth::{Auth, AuthRestaurant, AuthUser};
 use crate::api::restaurants::get_restaurant_name;
 use crate::api::users::get_username;
 use crate::api::AppContext;
 use crate::api::Result;
+
+const KEY_INDEX: &str = "1";
+const KEY: &str = "96434309-7796-489d-8924-ab56988a6076";
+const HOST: &str = "https://api-preprod.phonepe.com/apis/pg-sandbox";
+const MID: &str = "PGTESTPAYUAT86";
 
 pub(crate) fn router() -> Router<AppContext> {
     Router::new()
@@ -21,7 +29,6 @@ pub(crate) fn router() -> Router<AppContext> {
         .route("/api/orders/complete/:order_id", post(complete_order))
         .route("/api/orders/:days", get(get_orders))
         .route("/api/orders/payment/:order_id", get(get_payment_session))
-        .route("/api/orders/payment/verify/:order_id", get(verify_payment))
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -59,13 +66,6 @@ struct NewOrder {
 struct NewItem {
     id: uuid::Uuid,
     quantity: i32,
-}
-
-#[derive(Deserialize, Serialize, Debug)]
-struct PaymentResponse {
-    cf_order_id: String,
-    payment_session_id: String,
-    order_status: String,
 }
 
 async fn make_order(
@@ -112,59 +112,6 @@ async fn make_order(
         .await?;
     }
 
-    let rk = sqlx::query!(
-        r#"select cashfree_app_id, cashfree_secret_key from restaurant where restaurant_id=$1"#,
-        req.order.restaurant_id
-    )
-    .fetch_one(&mut *tx)
-    .await?;
-
-    let client = Client::new();
-
-    let cf_order_data = json!({
-        "order_amount": total,
-        "order_currency": "INR",
-        "customer_details": {
-            "customer_id": auth_user.user_id,
-            "customer_name": &get_username(auth_user.user_id, &ctx).await?,
-            "customer_phone": "+919999999999"
-        }
-    });
-
-    let response = client
-        .post("https://sandbox.cashfree.com/pg/orders")
-        .header(
-            "X-Client-Secret",
-            rk.cashfree_secret_key
-                .context("cashfree_secret_key is empyt")?,
-        )
-        .header(
-            "X-Client-Id",
-            rk.cashfree_app_id.context("cashfree_app_id is empty")?,
-        )
-        .header("x-api-version", "2023-08-01")
-        .header("Content-Type", "application/json")
-        .header("Accept", "application/json")
-        .json(&cf_order_data)
-        .send()
-        .await
-        .context("failed to create payment session")?;
-
-    if !response.status().is_success() {
-        return Err(anyhow::anyhow!("failed to create payment session").into());
-    }
-
-    let response: PaymentResponse = response.json().await.context("failed to parse response")?;
-
-    sqlx::query!(
-        r#"insert into "payment" (cf_order_id,order_id,payment_session_id) values ($1,$2,$3)"#,
-        response.cf_order_id,
-        order.order_id,
-        response.payment_session_id
-    )
-    .execute(&mut *tx)
-    .await?;
-
     tx.commit().await?;
 
     Ok(Json(OrderBody {
@@ -182,93 +129,201 @@ async fn make_order(
     }))
 }
 
-#[derive(Deserialize)]
-struct PaymentStatus {
-    order_status: String,
+fn calc_xverify(parts: &[&str], index: &str) -> String {
+    let mut hasher = sha2::Sha256::new();
+    for part in parts {
+        hasher.update(part);
+    }
+    let result = hasher.finalize();
+    let mut xverify = hex::encode(result);
+    xverify.push_str("###");
+    xverify.push_str(index);
+    xverify
+}
+
+#[derive(Serialize, Deserialize)]
+enum PaymentStatus {
+    Paid,
+    Pending,
+    Failed,
+}
+
+#[derive(Serialize, Deserialize)]
+struct Payment {
+    status: PaymentStatus,
+    url: Option<String>,
 }
 
 async fn get_payment_session(
+    auth_user: AuthUser,
     Path(order_id): Path<uuid::Uuid>,
     ctx: State<AppContext>,
-) -> Result<Json<String>> {
-    let payment_session_id = sqlx::query!(
-        r#"select payment_session_id from "payment" where order_id = $1"#,
+) -> Result<Json<Payment>> {
+    let order = sqlx::query!(
+        r#"select total, status, payment_url from "order" where order_id = $1"#,
         order_id
     )
     .fetch_one(&ctx.db)
     .await?;
 
-    Ok(Json(payment_session_id.payment_session_id))
+    if order.status == "payment_failed" {
+        return Ok(Json(Payment {
+            status: PaymentStatus::Failed,
+            url: None,
+        }));
+    }
+
+    if order.status != "payment_pending" {
+        return Ok(Json(Payment {
+            status: PaymentStatus::Paid,
+            url: None,
+        }));
+    }
+
+    let oid = order_id.to_string().replace("-", "");
+    let user_id = auth_user.user_id.to_string().replace("-", "");
+
+    match order.payment_url {
+        Some(url) => {
+            let status = verify_payment(oid).await?;
+            match status {
+                PaymentStatus::Paid => {
+                    sqlx::query!(
+                        r#"update "order" set status = 'payment_paid' where order_id = $1"#,
+                        order_id
+                    )
+                    .execute(&ctx.db)
+                    .await?;
+                    Ok(Json(Payment {
+                        status: PaymentStatus::Paid,
+                        url: None,
+                    }))
+                }
+                PaymentStatus::Pending => Ok(Json(Payment {
+                    status: PaymentStatus::Pending,
+                    url: Some(url),
+                })),
+                PaymentStatus::Failed => {
+                    sqlx::query!(
+                        r#"update "order" set status = 'payment_failed' where order_id = $1"#,
+                        order_id
+                    )
+                    .execute(&ctx.db)
+                    .await?;
+                    Ok(Json(Payment {
+                        status: PaymentStatus::Failed,
+                        url: Some(url),
+                    }))
+                }
+            }
+        }
+        None => {
+            let data = json!({
+              "merchantId": MID,
+              "merchantTransactionId": oid,
+              "merchantUserId": user_id,
+              "amount": order.total.to_string()+"00",
+              "redirectUrl": "https://webhook.site/redirect-url",
+              "redirectMode": "REDIRECT",
+              "callbackUrl": "https://webhook.site/callback-url",
+              "paymentInstrument": {
+                "type": "PAY_PAGE"
+              }
+            });
+
+            let request_data = data
+                .to_base64()
+                .context("failed to convert json data to base64")?;
+
+            let request = json!({
+                "request": request_data
+            });
+
+            let client = Client::new();
+
+            let xverify = calc_xverify(&[&request_data, "/pg/v1/pay", KEY], KEY_INDEX);
+
+            let response = client
+                .post(format!("{}/pg/v1/pay", HOST))
+                .header("Content-Type", "application/json")
+                .header("X-VERIFY", xverify)
+                .json(&request)
+                .send()
+                .await
+                .context("failed to make phonepe api call")?;
+
+            if !response.status().is_success() {
+                return Err(anyhow::anyhow!(format!(
+                    "got error status while calling phonepe: {}",
+                    response.text().await.context("couldnte get text")?
+                ))
+                .into());
+            }
+
+            let response: serde_json::Value =
+                response.json().await.context("failed to parse response")?;
+
+            info!("response: {:?}", response);
+
+            let url = response["data"]["instrumentResponse"]["redirectInfo"]["url"]
+                .as_str()
+                .context("weird url")?;
+
+            sqlx::query!(
+                r#"update "order" set payment_url = $1 where order_id = $2"#,
+                url,
+                order_id
+            )
+            .execute(&ctx.db)
+            .await?;
+
+            Ok(Json(Payment {
+                status: PaymentStatus::Pending,
+                url: Some(url.into()),
+            }))
+        }
+    }
 }
 
-async fn verify_payment(
-    Path(order_id): Path<uuid::Uuid>,
-    ctx: State<AppContext>,
-) -> Result<impl IntoResponse> {
-    let cf_order_id = sqlx::query_scalar!(
-        r#"select cf_order_id from "payment" where order_id = $1"#,
-        order_id
-    )
-    .fetch_one(&ctx.db)
-    .await?;
-
+async fn verify_payment(oid: String) -> Result<PaymentStatus> {
     let client = Client::new();
-
+    let api_url = format!("{HOST}/pg/v1/status/{MID}/{oid}");
+    let xverify = calc_xverify(&[&format!("/pg/v1/status/{MID}/{oid}"), KEY], KEY_INDEX);
     let response = client
-        .get(format!(
-            "https://sandbox.cashfree.com/pg/orders/{}",
-            cf_order_id
-        ))
-        .header("x-api-version", "2023-08-01")
-        .header("Accept", "application/json")
+        .get(api_url)
+        .header("Content-Type", "application/json")
+        .header("X-VERIFY", xverify)
+        .header("X-MERCHANT-ID", MID)
         .send()
         .await
-        .context("failed to verify payment")?;
+        .context("failed to api request to phonepe")?;
 
     if !response.status().is_success() {
-        return Err(anyhow::anyhow!("failed to verify payment").into());
+        return Err(anyhow::anyhow!(format!(
+            "got error status while calling phonepe: {}",
+            response.text().await.context("couldn't get text")?
+        ))
+        .into());
     }
 
-    let response: PaymentStatus = response.json().await.context("failed to parse response")?;
+    let response: serde_json::Value = response.json().await.context("failed to parse response")?;
 
-    if response.order_status == "PENDING" {
-        return Ok("PENDING");
+    dbg!(response.to_string());
+    let code = response
+        .get("code")
+        .context("field code missing from phonepe response")?
+        .as_str()
+        .context("weird field code")?;
+    match code {
+        "PAYMENT_SUCCESS" => Ok(PaymentStatus::Paid),
+        "PAYMENT_PENDING" => Ok(PaymentStatus::Pending),
+        "PAYMENT_DECLINED" | "TIMED_OUT" => Ok(PaymentStatus::Failed),
+        _ => Err(anyhow::anyhow!(format!(
+            "unknown payment status code in phonepe response: {}",
+            code
+        ))
+        .into()),
     }
-
-    if response.order_status == "PAID" {
-        sqlx::query!(
-            r#"update "order" set status = 'paid' where order_id = $1"#,
-            order_id
-        )
-        .execute(&ctx.db)
-        .await?;
-
-        sqlx::query!(
-            r#"update "payment" set status = 'paid' where order_id = $1"#,
-            order_id
-        )
-        .execute(&ctx.db)
-        .await?;
-
-        return Ok("PAID");
-    } else {
-        sqlx::query!(
-            r#"update "order" set status = 'failed' where order_id = $1"#,
-            order_id
-        )
-        .execute(&ctx.db)
-        .await?;
-        sqlx::query!(
-            r#"update "payment" set status = 'failed' where order_id = $1"#,
-            order_id
-        )
-        .execute(&ctx.db)
-        .await?;
-
-        return Ok("FAILED");
-    }
-
-    Ok("")
 }
 
 async fn get_pending_orders(auth: Auth, ctx: State<AppContext>) -> Result<Json<Vec<Order>>> {
@@ -393,7 +448,6 @@ async fn get_orders(
             get_orders_restaurant(auth_restaurant, days, ctx).await?
         }
     };
-
     Ok(Json(orders))
 }
 
