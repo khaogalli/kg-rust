@@ -21,6 +21,7 @@ mod auth;
 mod error;
 mod orders;
 mod restaurants;
+mod stats;
 mod users;
 mod util;
 
@@ -56,6 +57,7 @@ fn routes(app_context: AppContext) -> Router {
         .merge(users::router())
         .merge(restaurants::router())
         .merge(orders::router())
+        .merge(stats::router())
         .nest_service("/static", ServeDir::new("static"))
         .layer((
             DefaultBodyLimit::disable(),
