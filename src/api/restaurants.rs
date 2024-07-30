@@ -6,7 +6,7 @@ use axum::response::{AppendHeaders, IntoResponse, Response};
 use image::imageops::FilterType::Nearest;
 use image::ImageFormat;
 use serde::Deserialize;
-use sqlx::query;
+use sqlx::{query, query_scalar};
 
 use crate::api::auth::{Auth, AuthRestaurant, AuthUser};
 use crate::api::util::{hash_password, image_from_base64, verify_password};
@@ -73,15 +73,31 @@ struct Restaurants {
 struct RestaurantInfo {
     id: uuid::Uuid,
     name: String,
+    pending_orders: i64,
 }
 
 async fn get_restaurants(_user: AuthUser, ctx: State<AppContext>) -> Result<Json<Restaurants>> {
-    let restaurants = sqlx::query_as!(
-        RestaurantInfo,
-        r#"select restaurant_id as "id!", name from restaurant"#
-    )
-    .fetch_all(&ctx.db)
-    .await?;
+    let mut tx = ctx.db.begin().await?;
+    let records = sqlx::query!(r#"select restaurant_id as "id!", name from restaurant"#)
+        .fetch_all(&mut *tx)
+        .await?;
+
+    let mut restaurants = vec![];
+    for restaurant in records {
+        let pending_orders = query_scalar!(
+            r#"select count(*) from "order" where restaurant_id=$1 and status='paid';"#,
+            restaurant.id
+        )
+        .fetch_one(&mut *tx)
+        .await?
+        .context("unexpected option none")?;
+
+        restaurants.push(RestaurantInfo {
+            id: restaurant.id,
+            name: restaurant.name,
+            pending_orders,
+        })
+    }
 
     Ok(Json(Restaurants { restaurants }))
 }
