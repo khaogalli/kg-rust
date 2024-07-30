@@ -116,5 +116,5 @@ async fn orders_per_hour_by_day(
         let hour = created_at.hour() as usize;
         orders_by_hour[day][hour] += 1;
     }
-    todo!()
+    Ok(orders_by_hour)
 }
