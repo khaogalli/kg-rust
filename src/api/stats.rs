@@ -10,25 +10,30 @@ use crate::api::auth::AuthRestaurant;
 use crate::api::{AppContext, Result};
 
 pub(crate) fn router() -> Router<AppContext> {
-    Router::new().route("/api/stats", get(get_stats))
+    Router::new()
+        .route("/api/stats/restaurant", get(get_restaurant_stats))
+        .route("/api/stats/user", get(get_user_stats))
 }
 
 #[derive(serde::Serialize)]
-struct Stats {
+struct RestaurantStats {
     total_orders: i64,
     total_revenue: i64,
     item_frequency: Vec<(String, i64)>,
     orders_per_hour_by_day: [[i64; 24]; 7],
 }
 
-async fn get_stats(auth_restaurant: AuthRestaurant, ctx: State<AppContext>) -> Result<Json<Stats>> {
-    let total_orders = total_orders(&ctx.db, auth_restaurant.restaurant_id).await?;
-    let total_revenue = total_revenue(&ctx.db, auth_restaurant.restaurant_id).await?;
-    let item_frequency = item_frequency(&ctx.db, auth_restaurant.restaurant_id).await?;
+async fn get_restaurant_stats(
+    auth_restaurant: AuthRestaurant,
+    ctx: State<AppContext>,
+) -> Result<Json<RestaurantStats>> {
+    let total_orders = total_orders_restaurant(&ctx.db, auth_restaurant.restaurant_id).await?;
+    let total_revenue = total_revenue_restaurant(&ctx.db, auth_restaurant.restaurant_id).await?;
+    let item_frequency = item_frequency_restaurant(&ctx.db, auth_restaurant.restaurant_id).await?;
     let orders_per_hour_by_day =
-        orders_per_hour_by_day(&ctx.db, auth_restaurant.restaurant_id).await?;
+        orders_per_hour_by_day_restaurant(&ctx.db, auth_restaurant.restaurant_id).await?;
 
-    Ok(Json(Stats {
+    Ok(Json(RestaurantStats {
         total_orders,
         total_revenue,
         item_frequency,
@@ -36,7 +41,7 @@ async fn get_stats(auth_restaurant: AuthRestaurant, ctx: State<AppContext>) -> R
     }))
 }
 
-async fn total_orders(db: &Pool<Postgres>, restaurant_id: uuid::Uuid) -> Result<i64> {
+async fn total_orders_restaurant(db: &Pool<Postgres>, restaurant_id: uuid::Uuid) -> Result<i64> {
     let row = sqlx::query!(
         r#"
         SELECT COUNT(*)
@@ -52,7 +57,7 @@ async fn total_orders(db: &Pool<Postgres>, restaurant_id: uuid::Uuid) -> Result<
     Ok(row.count.unwrap())
 }
 
-async fn total_revenue(db: &Pool<Postgres>, restaurant_id: uuid::Uuid) -> Result<i64> {
+async fn total_revenue_restaurant(db: &Pool<Postgres>, restaurant_id: uuid::Uuid) -> Result<i64> {
     let row = sqlx::query!(
         r#"
         SELECT COALESCE(SUM(total), 0) as total_revenue
@@ -68,7 +73,7 @@ async fn total_revenue(db: &Pool<Postgres>, restaurant_id: uuid::Uuid) -> Result
     Ok(row.total_revenue.unwrap())
 }
 
-async fn item_frequency(
+async fn item_frequency_restaurant(
     db: &Pool<Postgres>,
     restaurant_id: uuid::Uuid,
 ) -> Result<Vec<(String, i64)>> {
@@ -92,7 +97,7 @@ async fn item_frequency(
         .collect())
 }
 
-async fn orders_per_hour_by_day(
+async fn orders_per_hour_by_day_restaurant(
     db: &Pool<Postgres>,
     restaurant_id: uuid::Uuid,
 ) -> Result<[[i64; 24]; 7]> {
@@ -103,6 +108,87 @@ async fn orders_per_hour_by_day(
         WHERE restaurant_id = $1
         "#,
         restaurant_id
+    )
+    .fetch_all(db)
+    .await
+    .context("failed to get orders by hour per day")?;
+
+    let mut orders_by_hour = [[0; 24]; 7];
+
+    for row in rows {
+        let created_at = row.created_at.with_timezone(&Kolkata);
+        let day = created_at.weekday().num_days_from_monday() as usize;
+        let hour = created_at.hour() as usize;
+        orders_by_hour[day][hour] += 1;
+    }
+    Ok(orders_by_hour)
+}
+
+#[derive(serde::Serialize)]
+struct UserStats {
+    total_orders: i64,
+    total_spent: i64,
+    orders_per_hour_by_day: [[i64; 24]; 7],
+}
+
+async fn get_user_stats(
+    auth_user: crate::api::auth::AuthUser,
+    ctx: State<AppContext>,
+) -> Result<Json<UserStats>> {
+    let total_orders = total_orders_user(&ctx.db, auth_user.user_id).await?;
+    let total_spent = total_spent_user(&ctx.db, auth_user.user_id).await?;
+    let orders_per_hour_by_day = orders_per_hour_by_day_user(&ctx.db, auth_user.user_id).await?;
+
+    Ok(Json(UserStats {
+        total_orders,
+        total_spent,
+        orders_per_hour_by_day,
+    }))
+}
+
+async fn total_orders_user(db: &Pool<Postgres>, user_id: uuid::Uuid) -> Result<i64> {
+    let row = sqlx::query!(
+        r#"
+        SELECT COUNT(*)
+        FROM "order"
+        WHERE user_id = $1
+        "#,
+        user_id
+    )
+    .fetch_one(db)
+    .await
+    .context("failed to get total orders")?;
+
+    Ok(row.count.unwrap())
+}
+
+async fn total_spent_user(db: &Pool<Postgres>, user_id: uuid::Uuid) -> Result<i64> {
+    let row = sqlx::query!(
+        r#"
+        SELECT COALESCE(SUM(total), 0) as total_spent
+        FROM "order"
+        WHERE user_id = $1
+        "#,
+        user_id
+    )
+    .fetch_one(db)
+    .await
+    .context("failed to get total spent")?;
+
+    Ok(row.total_spent.unwrap())
+}
+
+async fn orders_per_hour_by_day_user(
+    db: &Pool<Postgres>,
+    user_id: uuid::Uuid,
+) -> Result<[[i64; 24]; 7]> {
+    let rows = sqlx::query!(
+        r#"
+        SELECT created_at as "created_at!: chrono::DateTime<Local>"
+        FROM "order"
+        WHERE user_id = $1
+        "#,
+        user_id
     )
     .fetch_all(db)
     .await
