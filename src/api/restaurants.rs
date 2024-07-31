@@ -49,6 +49,8 @@ struct Restaurant {
     username: String,
     name: String,
     token: String,
+    open_time: DateTime<Utc>,
+    close_time: DateTime<Utc>,
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -121,7 +123,7 @@ async fn login_restaurant(
 ) -> Result<Json<RestaurantBody<Restaurant>>> {
     let restaurant = sqlx::query!(
         r#"
-            select restaurant_id, username, name, password_hash
+            select restaurant_id, username, name, password_hash, open_time, close_time
             from "restaurant" where username = $1
         "#,
         req.restaurant.username,
@@ -141,6 +143,8 @@ async fn login_restaurant(
             .to_jwt(&ctx),
             username: restaurant.username,
             name: restaurant.name,
+            open_time: restaurant.open_time,
+            close_time: restaurant.close_time,
         },
     }))
 }
@@ -150,7 +154,7 @@ async fn get_current_restaurant(
     ctx: State<AppContext>,
 ) -> Result<Json<RestaurantBody<Restaurant>>> {
     let restaurant = sqlx::query!(
-        r#"select username, name from "restaurant" where restaurant_id = $1"#,
+        r#"select username, name, open_time, close_time from "restaurant" where restaurant_id = $1"#,
         auth_restaurant.restaurant_id
     )
     .fetch_one(&ctx.db)
@@ -162,6 +166,8 @@ async fn get_current_restaurant(
             token: auth_restaurant.to_jwt(&ctx),
             username: restaurant.username,
             name: restaurant.name,
+            open_time: restaurant.open_time,
+            close_time: restaurant.close_time,
         },
     }))
 }
@@ -189,7 +195,7 @@ async fn update_restaurant(
     let mut tx = ctx.db.begin().await?;
 
     let restaurant = sqlx::query!(
-        r#"select username, name, password_hash from "restaurant" where restaurant_id = $1"#,
+        r#"select username, name, password_hash, open_time, close_time from "restaurant" where restaurant_id = $1"#,
         auth_restaurant.restaurant_id
     )
     .fetch_one(&mut *tx)
@@ -266,6 +272,8 @@ async fn update_restaurant(
             token: auth_restaurant.to_jwt(&ctx),
             username: req.restaurant.username.unwrap_or(restaurant.username),
             name: req.restaurant.name.unwrap_or(restaurant.name),
+            open_time: req.restaurant.open_time.unwrap_or(restaurant.open_time),
+            close_time: req.restaurant.close_time.unwrap_or(restaurant.close_time),
         },
     }))
 }
