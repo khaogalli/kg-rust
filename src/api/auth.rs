@@ -1,6 +1,7 @@
 use crate::api::Error;
 use axum::extract::{FromRef, FromRequestParts};
 use axum::http::request::Parts;
+use chrono::Utc;
 
 use crate::api::AppContext;
 use async_trait::async_trait;
@@ -9,10 +10,9 @@ use axum::http::HeaderValue;
 use hmac::{Hmac, NewMac};
 use jwt::{SignWithKey, VerifyWithKey};
 use sha2::Sha384;
-use time::OffsetDateTime;
 use uuid::Uuid;
 
-const DEFAULT_SESSION_LENGTH: time::Duration = time::Duration::weeks(2);
+const DEFAULT_SESSION_LENGTH: chrono::Duration = chrono::Duration::weeks(1);
 
 const SCHEME_PREFIX: &str = "Bearer ";
 
@@ -35,7 +35,7 @@ impl AuthUser {
 
         AuthUserClaims {
             user_id: self.user_id,
-            exp: (OffsetDateTime::now_utc() + DEFAULT_SESSION_LENGTH).unix_timestamp(),
+            exp: (Utc::now() + DEFAULT_SESSION_LENGTH).timestamp(),
         }
         .sign_with_key(&hmac)
         .expect("HMAC signing should be infallible")
@@ -71,7 +71,7 @@ impl AuthUser {
 
         let (_header, claims) = jwt.into();
 
-        if claims.exp < OffsetDateTime::now_utc().unix_timestamp() {
+        if claims.exp < Utc::now().timestamp() {
             log::debug!("token expired");
             return Err(Error::Unauthorized);
         }
@@ -153,7 +153,7 @@ impl AuthRestaurant {
 
         AuthRestaurantClaims {
             restaurant_id: self.restaurant_id,
-            exp: (OffsetDateTime::now_utc() + DEFAULT_SESSION_LENGTH).unix_timestamp(),
+            exp: (Utc::now() + DEFAULT_SESSION_LENGTH).timestamp(),
         }
         .sign_with_key(&hmac)
         .expect("HMAC signing should be infallible")
@@ -196,7 +196,7 @@ impl AuthRestaurant {
 
         let (_header, claims) = jwt.into();
 
-        if claims.exp < OffsetDateTime::now_utc().unix_timestamp() {
+        if claims.exp < Utc::now().timestamp() {
             log::debug!("token expired");
             return Err(Error::Unauthorized);
         }
