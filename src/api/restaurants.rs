@@ -3,6 +3,7 @@ use std::io::Cursor;
 use axum::http::header::CONTENT_TYPE;
 use axum::http::StatusCode;
 use axum::response::{AppendHeaders, IntoResponse, Response};
+use chrono::{DateTime, Utc};
 use image::imageops::FilterType::Nearest;
 use image::ImageFormat;
 use serde::Deserialize;
@@ -74,13 +75,17 @@ struct RestaurantInfo {
     id: uuid::Uuid,
     name: String,
     pending_orders: i64,
+    open_time: DateTime<Utc>,
+    close_time: DateTime<Utc>,
 }
 
 async fn get_restaurants(_user: AuthUser, ctx: State<AppContext>) -> Result<Json<Restaurants>> {
     let mut tx = ctx.db.begin().await?;
-    let records = sqlx::query!(r#"select restaurant_id as "id!", name from restaurant"#)
-        .fetch_all(&mut *tx)
-        .await?;
+    let records = sqlx::query!(
+        r#"select restaurant_id as "id!", name, open_time as "open_time!: chrono::DateTime<Utc>", close_time as "close_time!: chrono::DateTime<Utc>" from restaurant"#
+    )
+    .fetch_all(&mut *tx)
+    .await?;
 
     let mut restaurants = vec![];
     for restaurant in records {
@@ -96,6 +101,8 @@ async fn get_restaurants(_user: AuthUser, ctx: State<AppContext>) -> Result<Json
             id: restaurant.id,
             name: restaurant.name,
             pending_orders,
+            open_time: restaurant.open_time,
+            close_time: restaurant.close_time,
         })
     }
 
@@ -164,6 +171,8 @@ struct UpdateRestaurant {
     username: Option<String>,
     update_pass: Option<UpdatePass>,
     name: Option<String>,
+    open_time: Option<DateTime<Utc>>,
+    close_time: Option<DateTime<Utc>>,
 }
 
 #[derive(serde::Deserialize)]
@@ -223,6 +232,26 @@ async fn update_restaurant(
         sqlx::query!(
             r#"update "restaurant" set name = $1 where restaurant_id = $2"#,
             name,
+            auth_restaurant.restaurant_id
+        )
+        .execute(&mut *tx)
+        .await?;
+    }
+
+    if let Some(open_time) = req.restaurant.open_time {
+        sqlx::query!(
+            r#"update "restaurant" set open_time = $1 where restaurant_id = $2"#,
+            open_time,
+            auth_restaurant.restaurant_id
+        )
+        .execute(&mut *tx)
+        .await?;
+    }
+
+    if let Some(close_time) = req.restaurant.close_time {
+        sqlx::query!(
+            r#"update "restaurant" set close_time = $1 where restaurant_id = $2"#,
+            close_time,
             auth_restaurant.restaurant_id
         )
         .execute(&mut *tx)
