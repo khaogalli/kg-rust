@@ -393,7 +393,7 @@ async fn get_orders_user(
     ctx: State<AppContext>,
 ) -> Result<Vec<Order>> {
     let db_orders = sqlx::query!(
-        r#"select order_id, restaurant_id, total, status, created_at as "created_at!: chrono::DateTime<Local>" from "order" where user_id = $1 and created_at > now() - interval '1 day' * $2 and status in ('completed','paid')"#,
+        r#"select order_id, restaurant_id, total, status, created_at as "created_at!: chrono::DateTime<Local>" from "order" where user_id = $1 and created_at > now() - interval '1 day' * $2 and status in ('completed','paid', 'cancelled')"#,
         auth_user.user_id,
         days as f64
     )
