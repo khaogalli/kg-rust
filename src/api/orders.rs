@@ -26,6 +26,7 @@ pub(crate) fn router() -> Router<AppContext> {
         .route("/api/orders/complete/:order_id", post(complete_order))
         .route("/api/orders/:days", get(get_orders))
         .route("/api/orders/payment/:order_id", get(get_payment_session))
+        .route("/api/orders/cancel/:order_id", post(cancel_order))
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -450,4 +451,37 @@ async fn get_orders_restaurant(
     }
 
     Ok(orders)
+}
+
+async fn cancel_order(
+    auth_user: AuthUser,
+    Path(order_id): Path<uuid::Uuid>,
+    ctx: State<AppContext>,
+) -> Result<Json<bool>> {
+    // allow user to cancel only if order is not completed and less than 1 minute old
+    let order = sqlx::query!(
+        r#"select status, updated_at as "updated_at!: chrono::DateTime<Local>" from "order" where order_id = $1 and user_id = $2"#,
+        order_id,
+        auth_user.user_id
+    )
+    .fetch_one(&ctx.db)
+    .await?;
+
+    if order.status != "paid" {
+        return Ok(Json(false));
+    }
+
+    let now = chrono::Local::now();
+    if now.signed_duration_since(order.updated_at).num_seconds() > 60 {
+        return Ok(Json(false));
+    }
+
+    sqlx::query!(
+        r#"update "order" set status = 'cancelled' where order_id = $1"#,
+        order_id
+    )
+    .execute(&ctx.db)
+    .await?;
+
+    Ok(Json(true))
 }
