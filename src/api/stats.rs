@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use ::chrono::{Datelike, Timelike, Utc};
+use ::chrono::{DateTime, Datelike, Timelike, Utc};
 use anyhow::Context;
 use axum::extract::{Path, State};
 use axum::routing::get;
@@ -18,7 +18,7 @@ pub(crate) fn router() -> Router<AppContext> {
         .route("/api/stats/restaurant", get(get_restaurant_stats))
         .route("/api/stats/user", get(get_user_stats))
         .route(
-            "/api/stats/restaurant/custom/days/:start/:end",
+            "/api/stats/restaurant/custom/days",
             get(get_custom_restaurants_stats),
         )
 }
@@ -250,25 +250,17 @@ struct RestaurantStatsCustom {
     orders_by_day: HashMap<String, i64>,
 }
 
+#[derive(serde::Deserialize)]
+struct DateRange {
+    start: DateTime<Utc>,
+    end: DateTime<Utc>,
+}
 async fn get_custom_restaurants_stats(
-    Path(start): Path<String>,
-    Path(end): Path<String>,
     auth_restaurant: AuthRestaurant,
     ctx: State<AppContext>,
+    Json(req): Json<DateRange>,
 ) -> Result<Json<RestaurantStatsCustom>> {
-    let start = chrono::DateTime::parse_from_rfc3339(start.as_str())
-        .context("invalid start date")?
-        .with_timezone(&Kolkata)
-        .with_time(chrono::NaiveTime::from_hms(0, 0, 0))
-        .unwrap()
-        .to_utc();
-
-    let end = chrono::DateTime::parse_from_rfc3339(end.as_str())
-        .context("invalid end date")?
-        .with_timezone(&Kolkata)
-        .with_time(chrono::NaiveTime::from_hms(23, 59, 59))
-        .unwrap()
-        .to_utc();
+    let DateRange { start, end } = req;
 
     let total_orders =
         total_orders_custom(&ctx.db, auth_restaurant.restaurant_id, start, end).await?;
