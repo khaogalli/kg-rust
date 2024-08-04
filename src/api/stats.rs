@@ -251,11 +251,25 @@ struct RestaurantStatsCustom {
 }
 
 async fn get_custom_restaurants_stats(
-    Path(start): Path<chrono::DateTime<Utc>>,
-    Path(end): Path<chrono::DateTime<Utc>>,
+    Path(start): Path<String>,
+    Path(end): Path<String>,
     auth_restaurant: AuthRestaurant,
     ctx: State<AppContext>,
 ) -> Result<Json<RestaurantStatsCustom>> {
+    let start = chrono::DateTime::parse_from_rfc3339(start.as_str())
+        .context("invalid start date")?
+        .with_timezone(&Kolkata)
+        .with_time(chrono::NaiveTime::from_hms(0, 0, 0))
+        .unwrap()
+        .to_utc();
+
+    let end = chrono::DateTime::parse_from_rfc3339(end.as_str())
+        .context("invalid end date")?
+        .with_timezone(&Kolkata)
+        .with_time(chrono::NaiveTime::from_hms(23, 59, 59))
+        .unwrap()
+        .to_utc();
+
     let total_orders =
         total_orders_custom(&ctx.db, auth_restaurant.restaurant_id, start, end).await?;
     let total_revenue =
