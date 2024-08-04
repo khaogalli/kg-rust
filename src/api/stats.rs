@@ -19,7 +19,7 @@ pub(crate) fn router() -> Router<AppContext> {
         .route("/api/stats/user", get(get_user_stats))
         .route(
             "/api/stats/restaurant/custom/days",
-            get(get_custom_restaurants_stats),
+            post(get_custom_restaurants_stats),
         )
 }
 
