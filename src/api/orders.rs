@@ -472,7 +472,7 @@ async fn cancel_order(
     }
 
     let now = chrono::Local::now();
-    if now.signed_duration_since(order.updated_at).num_seconds() > 60 {
+    if now.signed_duration_since(order.updated_at).num_minutes() > 3 {
         return Ok(Json(false));
     }
 
