@@ -11,6 +11,7 @@ use serde_json::json;
 use sha2::Digest;
 
 use crate::api::auth::{Auth, AuthRestaurant, AuthUser};
+use crate::api::notifications::{new_notification, Notification};
 use crate::api::restaurants::{
     get_restaurant_name, get_restaurant_phonpe_details, PhonepeMerchant,
 };
@@ -360,15 +361,25 @@ async fn complete_order(
 ) -> Result<()> {
     let mut tx = ctx.db.begin().await?;
 
-    sqlx::query!(
-        r#"update "order" set status = 'completed' where order_id = $1 and restaurant_id = $2 and status='paid'"#,
+    let x = sqlx::query!(
+        r#"update "order" set status = 'completed' where order_id = $1 and restaurant_id = $2 and status='paid' returning user_id"#,
         order_id,
         auth_restaurant.restaurant_id
     )
-    .execute(&mut *tx)
+    .fetch_one(&mut *tx)
     .await?;
-
     tx.commit().await?;
+    new_notification(
+        ctx,
+        Notification {
+            sender_id: Some(auth_restaurant.restaurant_id),
+            recipient_id: Some(x.user_id),
+            title: "Order Completed".into(),
+            body: "Your order has been completed".into(),
+            ttl_minutes: 24 * 60,
+        },
+    )
+    .await?;
 
     Ok(())
 }
@@ -454,11 +465,26 @@ async fn get_orders_restaurant(
 }
 
 async fn cancel_order(
-    auth_user: AuthUser,
+    auth: Auth,
     Path(order_id): Path<uuid::Uuid>,
     ctx: State<AppContext>,
 ) -> Result<Json<bool>> {
     // allow user to cancel only if order is not completed and less than 1 minute old
+    // and allow restaurant to cancel any time before completing
+
+    match auth {
+        Auth::User(auth_user) => cancel_order_user(auth_user, order_id, ctx).await,
+        Auth::Restaurant(auth_restaurant) => {
+            cancel_order_restaurant(auth_restaurant, order_id, ctx).await
+        }
+    }
+}
+
+async fn cancel_order_user(
+    auth_user: AuthUser,
+    order_id: uuid::Uuid,
+    ctx: State<AppContext>,
+) -> Result<Json<bool>> {
     let order = sqlx::query!(
         r#"select status, updated_at as "updated_at!: chrono::DateTime<Local>" from "order" where order_id = $1 and user_id = $2"#,
         order_id,
@@ -481,6 +507,45 @@ async fn cancel_order(
         order_id
     )
     .execute(&ctx.db)
+    .await?;
+
+    Ok(Json(true))
+}
+
+async fn cancel_order_restaurant(
+    auth_restaurant: AuthRestaurant,
+    order_id: uuid::Uuid,
+    ctx: State<AppContext>,
+) -> Result<Json<bool>> {
+    let order = sqlx::query!(
+        r#"select status from "order" where order_id = $1 and restaurant_id = $2"#,
+        order_id,
+        auth_restaurant.restaurant_id
+    )
+    .fetch_one(&ctx.db)
+    .await?;
+
+    if order.status != "paid" {
+        return Ok(Json(false));
+    }
+
+    let x = sqlx::query!(
+        r#"update "order" set status = 'cancelled' where order_id = $1 returning user_id"#,
+        order_id
+    )
+    .fetch_one(&ctx.db)
+    .await?;
+
+    new_notification(
+        ctx,
+        Notification {
+            sender_id: Some(auth_restaurant.restaurant_id),
+            recipient_id: Some(x.user_id),
+            title: "Order Cancelled".into(),
+            body: "Your order has been cancelled by restaurant".into(),
+            ttl_minutes: 24 * 60,
+        },
+    )
     .await?;
 
     Ok(Json(true))

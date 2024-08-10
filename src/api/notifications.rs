@@ -114,20 +114,6 @@ async fn send_notification(
     Json(req): Json<NewNotification>,
 ) -> Result<()> {
     let restaurant_id = auth_restaurant.restaurant_id;
-    let mut tx = ctx.db.begin().await?;
-    // insert notification into database
-    query!(
-        r#"
-        insert into notification (sender_id, title, body, ttl_minutes)
-        values ($1, $2, $3, $4)
-        "#,
-        restaurant_id,
-        req.title,
-        req.body,
-        req.ttl_minutes
-    )
-    .execute(&mut *tx)
-    .await?;
 
     let notification = Notification {
         sender_id: Some(restaurant_id),
@@ -136,9 +122,7 @@ async fn send_notification(
         body: req.body,
         ttl_minutes: req.ttl_minutes,
     };
-    send_expo_notification(ctx, notification).await?;
-
-    tx.commit().await?;
+    new_notification(ctx, notification).await?;
 
     Ok(())
 }
@@ -164,16 +148,43 @@ async fn delete_notification(
 }
 
 #[allow(unused)]
-struct Notification {
-    sender_id: Option<uuid::Uuid>,
-    recipient_id: Option<uuid::Uuid>,
-    title: String,
-    body: String,
-    ttl_minutes: i32,
+pub(crate) struct Notification {
+    pub sender_id: Option<uuid::Uuid>,
+    pub recipient_id: Option<uuid::Uuid>,
+    pub title: String,
+    pub body: String,
+    pub ttl_minutes: i32,
+}
+
+pub(crate) async fn new_notification(
+    ctx: State<AppContext>,
+    notification: Notification,
+) -> Result<()> {
+    let mut tx = ctx.db.begin().await?;
+    // insert notification into database
+    query!(
+        r#"
+        insert into notification (sender_id, recipient_id, title, body, ttl_minutes)
+        values ($1, $2, $3, $4, $5)
+        "#,
+        notification.sender_id,
+        notification.recipient_id,
+        notification.title,
+        notification.body,
+        notification.ttl_minutes
+    )
+    .execute(&mut *tx)
+    .await?;
+
+    send_expo_notification(ctx, notification).await?;
+
+    tx.commit().await?;
+
+    Ok(())
 }
 
 async fn send_expo_notification(ctx: State<AppContext>, notification: Notification) -> Result<()> {
-    let expo_push_tokens = match notification.recipient_id {
+    let expo_push_tokens = match (notification.recipient_id) {
         Some(recipient_id) => query!(
             r#"
             select expo_push_token as "expo_push_token!: String"
