@@ -1,6 +1,8 @@
+use anyhow::Context;
 use axum::extract::{Path, State};
 use axum::routing::{delete, get, post};
 use axum::{Json, Router};
+use expo_push_notification_client::{Expo, ExpoPushMessage};
 use serde::{Deserialize, Serialize};
 use sqlx::query;
 
@@ -100,10 +102,10 @@ async fn get_user_notifications(
 }
 
 #[derive(Deserialize)]
-pub struct NewNotification {
-    pub title: String,
-    pub body: String,
-    pub ttl_minutes: i32,
+struct NewNotification {
+    title: String,
+    body: String,
+    ttl_minutes: i32,
 }
 
 async fn send_notification(
@@ -112,6 +114,7 @@ async fn send_notification(
     Json(req): Json<NewNotification>,
 ) -> Result<()> {
     let restaurant_id = auth_restaurant.restaurant_id;
+    let mut tx = ctx.db.begin().await?;
     // insert notification into database
     query!(
         r#"
@@ -123,8 +126,20 @@ async fn send_notification(
         req.body,
         req.ttl_minutes
     )
-    .execute(&ctx.db)
+    .execute(&mut *tx)
     .await?;
+
+    let notification = Notification {
+        sender_id: Some(restaurant_id),
+        recipient_id: None,
+        title: req.title,
+        body: req.body,
+        ttl_minutes: req.ttl_minutes,
+    };
+    send_expo_notification(ctx, notification).await?;
+
+    tx.commit().await?;
+
     Ok(())
 }
 
@@ -145,5 +160,59 @@ async fn delete_notification(
     )
     .execute(&ctx.db)
     .await?;
+    Ok(())
+}
+
+#[allow(unused)]
+struct Notification {
+    sender_id: Option<uuid::Uuid>,
+    recipient_id: Option<uuid::Uuid>,
+    title: String,
+    body: String,
+    ttl_minutes: i32,
+}
+
+async fn send_expo_notification(ctx: State<AppContext>, notification: Notification) -> Result<()> {
+    let expo_push_tokens = match notification.recipient_id {
+        Some(recipient_id) => query!(
+            r#"
+            select expo_push_token as "expo_push_token!: String"
+            from "user"
+            where user_id = $1 and expo_push_token is not null
+            "#,
+            recipient_id
+        )
+        .fetch_all(&ctx.db)
+        .await?
+        .into_iter()
+        .map(|row| row.expo_push_token)
+        .collect::<Vec<String>>(),
+        None => query!(
+            r#"
+            select expo_push_token as "expo_push_token!: String"
+            from "user"
+            where expo_push_token is not null
+            "#,
+        )
+        .fetch_all(&ctx.db)
+        .await?
+        .into_iter()
+        .map(|row| row.expo_push_token)
+        .collect::<Vec<String>>(),
+    };
+    if expo_push_tokens.is_empty() {
+        return Ok(());
+    }
+
+    let expo = Expo::new(Default::default());
+    let message = ExpoPushMessage::builder(expo_push_tokens)
+        .title(notification.title)
+        .body(notification.body)
+        .build();
+
+    expo.send_push_notifications(message)
+        .await
+        .context("failed to send push notification")?;
+
     Ok(())
 }

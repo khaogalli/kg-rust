@@ -5,7 +5,7 @@ use axum::extract::{Path, State};
 use axum::http::header::CONTENT_TYPE;
 use axum::http::StatusCode;
 use axum::response::{AppendHeaders, IntoResponse, Response};
-use axum::routing::{get, post};
+use axum::routing::{get, post, put};
 use axum::{Json, Router};
 use image::imageops::FilterType::Nearest;
 use image::ImageFormat;
@@ -24,6 +24,7 @@ pub(crate) fn router() -> Router<AppContext> {
         .route("/api/users", get(get_current_user).patch(update_user))
         .route("/api/users/upload_image", post(upload_image))
         .route("/api/users/image/:id", get(get_image))
+        .route("/api/users/expo_push_token", put(update_push_token))
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -42,6 +43,7 @@ struct User {
     id: uuid::Uuid,
     token: String,
     username: String,
+    expo_push_token: Option<String>,
 }
 
 async fn create_user(
@@ -65,6 +67,7 @@ async fn create_user(
             id: user_id,
             token: AuthUser { user_id }.to_jwt(&ctx),
             username: req.user.username,
+            expo_push_token: None,
         },
     }))
 }
@@ -81,7 +84,7 @@ async fn login_user(
 ) -> Result<Json<UserBody<User>>> {
     let user = sqlx::query!(
         r#"
-            select user_id, username, password_hash
+            select user_id, username, password_hash, expo_push_token
             from "user" where username = $1
         "#,
         req.user.username,
@@ -100,6 +103,7 @@ async fn login_user(
             }
             .to_jwt(&ctx),
             username: user.username,
+            expo_push_token: user.expo_push_token,
         },
     }))
 }
@@ -108,8 +112,8 @@ async fn get_current_user(
     auth_user: AuthUser,
     ctx: State<AppContext>,
 ) -> Result<Json<UserBody<User>>> {
-    let user = sqlx::query_scalar!(
-        r#"select username from "user" where user_id = $1"#,
+    let user = sqlx::query!(
+        r#"select username, expo_push_token from "user" where user_id = $1"#,
         auth_user.user_id
     )
     .fetch_one(&ctx.db)
@@ -119,7 +123,8 @@ async fn get_current_user(
         user: User {
             id: auth_user.user_id,
             token: auth_user.to_jwt(&ctx),
-            username: user,
+            username: user.username,
+            expo_push_token: user.expo_push_token,
         },
     }))
 }
@@ -144,7 +149,7 @@ async fn update_user(
     let mut tx = ctx.db.begin().await?;
 
     let user = sqlx::query!(
-        r#"select username, password_hash from "user" where user_id = $1"#,
+        r#"select username, password_hash, expo_push_token from "user" where user_id = $1"#,
         auth_user.user_id
     )
     .fetch_one(&mut *tx)
@@ -190,6 +195,7 @@ async fn update_user(
             id: auth_user.user_id,
             token: auth_user.to_jwt(&ctx),
             username: req.user.username.unwrap_or(user.username),
+            expo_push_token: user.expo_push_token,
         },
     }))
 }
@@ -239,4 +245,19 @@ async fn get_image(Path(id): Path<uuid::Uuid>, State(ctx): State<AppContext>) ->
         Some(image) => Ok((AppendHeaders([(CONTENT_TYPE, "image/jpeg")]), image).into_response()),
         None => Ok(StatusCode::NOT_FOUND.into_response()),
     }
+}
+
+async fn update_push_token(
+    auth_user: AuthUser,
+    State(ctx): State<AppContext>,
+    Json(req): Json<String>,
+) -> Result<()> {
+    query!(
+        r#"update "user" set expo_push_token = $1 where user_id = $2"#,
+        req,
+        auth_user.user_id
+    )
+    .execute(&ctx.db)
+    .await?;
+    Ok(())
 }
