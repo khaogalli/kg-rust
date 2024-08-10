@@ -19,6 +19,7 @@ use crate::config::Config;
 
 mod auth;
 mod error;
+mod notifications;
 mod orders;
 mod restaurants;
 mod stats;
@@ -58,6 +59,7 @@ fn routes(app_context: AppContext) -> Router {
         .merge(restaurants::router())
         .merge(orders::router())
         .merge(stats::router())
+        .merge(notifications::router())
         .nest_service("/static", ServeDir::new("static"))
         .layer((
             DefaultBodyLimit::disable(),

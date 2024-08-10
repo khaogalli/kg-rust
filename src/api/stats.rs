@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use ::chrono::{DateTime, Datelike, Timelike, Utc};
 use anyhow::Context;
-use axum::extract::{Path, State};
+use axum::extract::State;
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use chrono::Local;
