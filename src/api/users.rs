@@ -247,14 +247,19 @@ async fn get_image(Path(id): Path<uuid::Uuid>, State(ctx): State<AppContext>) ->
     }
 }
 
+#[derive(Deserialize)]
+struct ExpoPushToken {
+    expo_push_token: String,
+}
+
 async fn update_push_token(
     auth_user: AuthUser,
     State(ctx): State<AppContext>,
-    Json(req): Json<String>,
+    Json(req): Json<ExpoPushToken>,
 ) -> Result<()> {
     query!(
         r#"update "user" set expo_push_token = $1 where user_id = $2"#,
-        req,
+        req.expo_push_token,
         auth_user.user_id
     )
     .execute(&ctx.db)
