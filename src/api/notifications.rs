@@ -184,7 +184,7 @@ pub(crate) async fn new_notification(
 }
 
 async fn send_expo_notification(ctx: State<AppContext>, notification: Notification) -> Result<()> {
-    let expo_push_tokens = match (notification.recipient_id) {
+    let expo_push_tokens = match notification.recipient_id {
         Some(recipient_id) => query!(
             r#"
             select expo_push_token as "expo_push_token!: String"

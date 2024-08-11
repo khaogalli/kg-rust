@@ -2,7 +2,7 @@ use anyhow::Context;
 use axum::extract::{Path, State};
 use axum::routing::{get, post};
 use axum::{Json, Router};
-use chrono::Local;
+use chrono::{Local, Utc};
 use jwt::ToBase64;
 use log::info;
 use reqwest::Client;
@@ -45,7 +45,11 @@ pub(super) struct Order {
     items: Vec<Item>,
     total: i32,
     status: String,
-    created_at: chrono::DateTime<Local>,
+    created_at: chrono::DateTime<Utc>,
+    order_placed_at: Option<chrono::DateTime<Utc>>,
+    order_completed_at: Option<chrono::DateTime<Utc>>,
+    time_taken: Option<i32>,
+    avg_wait_time: Option<i32>,
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -93,7 +97,7 @@ async fn make_order(
     }
 
     let order = sqlx::query!(
-        r#"insert into "order" (restaurant_id, user_id, total) values ($1, $2, $3) returning order_id, created_at as "created_at!: chrono::DateTime<Local>""#,
+        r#"insert into "order" (restaurant_id, user_id, total) values ($1, $2, $3) returning order_id, created_at"#,
         req.order.restaurant_id,
         auth_user.user_id,
         total
@@ -124,6 +128,10 @@ async fn make_order(
             total,
             status: "payment_pending".into(),
             created_at: order.created_at,
+            order_placed_at: None,
+            order_completed_at: None,
+            time_taken: None,
+            avg_wait_time: None,
         },
     }))
 }
@@ -190,7 +198,8 @@ async fn get_payment_session(
             match status {
                 PaymentStatus::Paid => {
                     sqlx::query!(
-                        r#"update "order" set status = 'paid' where order_id = $1"#,
+                        r#"update "order" set status = 'paid', order_placed_time = $1 where order_id = $2"#,
+                        Utc::now(),
                         order_id
                     )
                     .execute(&ctx.db)
@@ -362,7 +371,14 @@ async fn complete_order(
     let mut tx = ctx.db.begin().await?;
 
     let x = sqlx::query!(
-        r#"update "order" set status = 'completed' where order_id = $1 and restaurant_id = $2 and status='paid' returning user_id"#,
+        r#"update "order" 
+               set status = 'completed', 
+                   order_completed_time = now(), 
+                   time_taken = extract(epoch from now() - order_placed_time)
+               where order_id = $1 
+                 and restaurant_id = $2 
+                 and status = 'paid' 
+               returning user_id"#,
         order_id,
         auth_restaurant.restaurant_id
     )
@@ -404,7 +420,7 @@ async fn get_orders_user(
     ctx: State<AppContext>,
 ) -> Result<Vec<Order>> {
     let db_orders = sqlx::query!(
-        r#"select order_id, restaurant_id, total, status, created_at as "created_at!: chrono::DateTime<Local>" from "order" where user_id = $1 and created_at > now() - interval '1 day' * $2 and status in ('completed','paid', 'cancelled')"#,
+        r#"select order_id, restaurant_id, total, status, created_at, order_placed_time, order_completed_time, time_taken from "order" where user_id = $1 and created_at > now() - interval '1 day' * $2 and status in ('completed','paid', 'cancelled')"#,
         auth_user.user_id,
         days as f64
     )
@@ -415,6 +431,18 @@ async fn get_orders_user(
 
     for order in db_orders {
         let items = get_items(order.order_id, &ctx).await?;
+        let avg_wait_time = if order.status == "paid" {
+            let avg_wait_time = sqlx::query!(
+                r#"select TRUNC(avg(time_taken)) as "avg_wait_time: i32" from "order" where user_id = $1 and status = 'completed'"#,
+                auth_user.user_id
+            )
+            .fetch_one(&ctx.db)
+            .await?;
+            Some(avg_wait_time.avg_wait_time.unwrap_or(0))
+        } else {
+            None
+        };
+
         orders.push(Order {
             id: order.order_id,
             restaurant_id: order.restaurant_id,
@@ -425,6 +453,10 @@ async fn get_orders_user(
             total: order.total,
             status: order.status,
             created_at: order.created_at,
+            order_placed_at: order.order_placed_time,
+            order_completed_at: order.order_completed_time,
+            time_taken: order.time_taken,
+            avg_wait_time,
         });
     }
 
@@ -437,7 +469,7 @@ async fn get_orders_restaurant(
     ctx: State<AppContext>,
 ) -> Result<Vec<Order>> {
     let db_orders = sqlx::query!(
-        r#"select order_id, user_id, total, status, created_at as "created_at!: chrono::DateTime<Local>" from "order" where restaurant_id = $1 and created_at > now() - interval '1 day' * $2 and status in ('completed','paid')"#,
+        r#"select order_id, user_id, total, status, created_at, order_placed_time, order_completed_time, time_taken from "order" where restaurant_id = $1 and created_at > now() - interval '1 day' * $2 and status in ('completed','paid')"#,
         auth_restaurant.restaurant_id,
         days as f64
     )
@@ -458,6 +490,10 @@ async fn get_orders_restaurant(
             total: order.total,
             status: order.status,
             created_at: order.created_at,
+            order_placed_at: order.order_placed_time,
+            order_completed_at: order.order_completed_time,
+            time_taken: order.time_taken,
+            avg_wait_time: None,
         });
     }
 
