@@ -5,7 +5,6 @@ use anyhow::Context;
 use axum::extract::State;
 use axum::routing::{get, post};
 use axum::{Json, Router};
-use bigdecimal::BigDecimal;
 use chrono::Local;
 use chrono_tz::Asia::Kolkata;
 use sqlx::types::chrono;
@@ -74,9 +73,9 @@ async fn top_items_by_meal_period(
         _ => return Err(anyhow::anyhow!("Invalid meal period").into()),
     };
 
-    let start = BigDecimal::from(time_range.0);
-    let end = BigDecimal::from(time_range.1);
-    let rows = sqlx::query!(
+    let start = time_range.0 as f64;
+    let end = time_range.1 as f64;
+    let rows = sqlx::query_unchecked!(
         r#"
         SELECT item_name, COUNT(*) as count
         FROM "order"
