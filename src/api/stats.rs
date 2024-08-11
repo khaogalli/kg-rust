@@ -297,6 +297,9 @@ struct RestaurantStatsCustom {
     total_revenue: i64,
     item_frequency: Vec<(String, i64)>,
     orders_by_day: HashMap<String, i64>,
+    top_3_breakfast_items: Vec<(String, i64)>,
+    top_3_lunch_items: Vec<(String, i64)>,
+    top_3_dinner_items: Vec<(String, i64)>,
 }
 
 #[derive(serde::Deserialize)]
@@ -319,13 +322,81 @@ async fn get_custom_restaurants_stats(
         item_frequency_custom(&ctx.db, auth_restaurant.restaurant_id, start, end).await?;
     let orders_by_day =
         orders_by_day_custom(&ctx.db, auth_restaurant.restaurant_id, start, end).await?;
+    let top_3_breakfast_items = top_items_by_meal_period_custom(
+        &ctx.db,
+        auth_restaurant.restaurant_id,
+        "breakfast",
+        start,
+        end,
+    )
+    .await?;
+    let top_3_lunch_items = top_items_by_meal_period_custom(
+        &ctx.db,
+        auth_restaurant.restaurant_id,
+        "lunch",
+        start,
+        end,
+    )
+    .await?;
+    let top_3_dinner_items = top_items_by_meal_period_custom(
+        &ctx.db,
+        auth_restaurant.restaurant_id,
+        "dinner",
+        start,
+        end,
+    )
+    .await?;
 
     Ok(Json(RestaurantStatsCustom {
         total_orders,
         total_revenue,
         item_frequency,
         orders_by_day,
+        top_3_breakfast_items,
+        top_3_lunch_items,
+        top_3_dinner_items,
     }))
+}
+
+async fn top_items_by_meal_period_custom(
+    db: &Pool<Postgres>,
+    restaurant_id: uuid::Uuid,
+    meal_period: &str,
+    start: chrono::DateTime<Utc>,
+    end: chrono::DateTime<Utc>,
+) -> Result<Vec<(String, i64)>> {
+    let time_range = match meal_period {
+        "breakfast" => (6, 10),
+        "lunch" => (11, 14),
+        "dinner" => (18, 21),
+        _ => return Err(anyhow::anyhow!("Invalid meal period").into()),
+    };
+
+    let start_t = time_range.0 as f64;
+    let end_t = time_range.1 as f64;
+    let rows = sqlx::query_unchecked!(
+        r#"
+        SELECT item_name, COUNT(*) as count
+        FROM "order"
+        JOIN "order_item" ON "order".order_id = "order_item".order_id
+        WHERE restaurant_id = $1 AND EXTRACT(HOUR FROM (order_placed_time AT TIME ZONE 'Asia/Kolkata')) BETWEEN $2 AND $3 AND created_at >= $4 AND created_at <= $5
+        GROUP BY item_name
+        ORDER BY count DESC
+        LIMIT 3
+        "#,
+        restaurant_id,
+        start_t,
+        end_t,
+        start,
+        end
+    )
+    .fetch_all(db)
+    .await?;
+
+    Ok(rows
+        .into_iter()
+        .map(|row| (row.item_name, row.count.unwrap_or(0)))
+        .collect())
 }
 
 async fn total_orders_custom(
