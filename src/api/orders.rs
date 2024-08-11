@@ -46,8 +46,8 @@ pub(super) struct Order {
     total: i32,
     status: String,
     created_at: chrono::DateTime<Utc>,
-    order_placed_at: Option<chrono::DateTime<Utc>>,
-    order_completed_at: Option<chrono::DateTime<Utc>>,
+    order_placed_time: Option<chrono::DateTime<Utc>>,
+    order_completed_time: Option<chrono::DateTime<Utc>>,
     time_taken: Option<i32>,
     avg_wait_time: Option<i32>,
 }
