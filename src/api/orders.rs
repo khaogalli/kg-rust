@@ -18,6 +18,7 @@ use crate::api::restaurants::{
 use crate::api::users::get_username;
 use crate::api::AppContext;
 use crate::api::Result;
+use bigdecimal::ToPrimitive;
 
 const HOST: &str = "https://api-preprod.phonepe.com/apis/pg-sandbox";
 
@@ -433,12 +434,17 @@ async fn get_orders_user(
         let items = get_items(order.order_id, &ctx).await?;
         let avg_wait_time = if order.status == "paid" {
             let avg_wait_time = sqlx::query!(
-                r#"select TRUNC(avg(time_taken)) as "avg_wait_time: i32" from "order" where user_id = $1 and status = 'completed'"#,
+                r#"select avg(time_taken) as avg_wait_time from "order" where user_id = $1 and status = 'completed'"#,
                 auth_user.user_id
             )
             .fetch_one(&ctx.db)
             .await?;
-            Some(avg_wait_time.avg_wait_time.unwrap_or(0))
+            Some(
+                avg_wait_time
+                    .avg_wait_time
+                    .map(|x| x.to_i32().unwrap_or(0))
+                    .unwrap_or(0),
+            )
         } else {
             None
         };
