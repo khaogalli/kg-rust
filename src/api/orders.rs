@@ -522,7 +522,7 @@ async fn cancel_order_user(
     ctx: State<AppContext>,
 ) -> Result<Json<bool>> {
     let order = sqlx::query!(
-        r#"select status, updated_at as "updated_at!: chrono::DateTime<Local>" from "order" where order_id = $1 and user_id = $2"#,
+        r#"select status, order_placed_time from "order" where order_id = $1 and user_id = $2"#,
         order_id,
         auth_user.user_id
     )
@@ -533,8 +533,14 @@ async fn cancel_order_user(
         return Ok(Json(false));
     }
 
-    let now = chrono::Local::now();
-    if now.signed_duration_since(order.updated_at).num_minutes() > 3 {
+    let order_time = if let Some(order_time) = order.order_placed_time {
+        order_time
+    } else {
+        return Ok(Json(false));
+    };
+
+    let now = Utc::now();
+    if now.signed_duration_since(order_time).num_minutes() > 1 {
         return Ok(Json(false));
     }
 
