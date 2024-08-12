@@ -11,4 +11,12 @@ pub struct Config {
     /// The HMAC secret key used to sign JWT tokens
     #[clap(long, env)]
     pub hmac_key: String,
+
+    /// Max number of connections to the database
+    #[clap(long, env, default_value = "10")]
+    pub db_max_connections: u32,
+
+    /// Min number of connections to the database
+    #[clap(long, env, default_value = "0")]
+    pub db_min_connections: u32,
 }

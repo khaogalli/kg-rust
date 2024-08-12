@@ -2,7 +2,7 @@ use anyhow::Context;
 use clap::Parser;
 use kg_rust::api;
 use kg_rust::config::Config;
-use sqlx::postgres::PgPool;
+use sqlx::postgres::{PgPool, PgPoolOptions};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -16,9 +16,13 @@ async fn main() -> anyhow::Result<()> {
     // Parse config from command line arguments and environment
     let config = Config::parse();
 
-    let db = PgPool::connect(&config.database_url)
+    let db = PgPoolOptions::new()
+        .min_connections(config.db_min_connections)
+        .max_connections(config.db_max_connections)
+        .test_before_acquire(true)
+        .connect(&config.database_url)
         .await
-        .context("could not connect to database_url")?;
+        .context("could not connect to database")?;
 
     sqlx::migrate!()
         .run(&db)
