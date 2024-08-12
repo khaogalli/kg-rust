@@ -392,7 +392,10 @@ async fn complete_order(
             sender_id: Some(auth_restaurant.restaurant_id),
             recipient_id: Some(x.user_id),
             title: "Order Completed".into(),
-            body: "Your order has been completed".into(),
+            body: format!(
+                "Your order {} has been completed",
+                &order_id.to_string()[24..]
+            ),
             ttl_minutes: 24 * 60,
         },
     )
@@ -590,7 +593,10 @@ async fn cancel_order_restaurant(
             sender_id: Some(auth_restaurant.restaurant_id),
             recipient_id: Some(x.user_id),
             title: "Order Cancelled".into(),
-            body: "Your order has been cancelled by restaurant".into(),
+            body: format!(
+                "Your order {} has been cancelled",
+                &order_id.to_string()[24..]
+            ),
             ttl_minutes: 24 * 60,
         },
     )
