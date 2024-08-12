@@ -220,7 +220,7 @@ async fn upload_image(
     Json(req): Json<ImageUpload>,
 ) -> Result<()> {
     let image = image_from_base64(&req.image)?;
-    let image = image.resize(160, 160, Nearest);
+    let image = image.resize(1000, 1000, Nearest);
     let mut cursor = Cursor::new(Vec::new());
     image
         .write_to(&mut cursor, ImageFormat::Jpeg)
